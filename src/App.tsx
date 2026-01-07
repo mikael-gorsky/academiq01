@@ -1,0 +1,103 @@
+import { useState } from 'react';
+import { GraduationCap, Plus, BarChart3 } from 'lucide-react';
+import { ToastProvider } from './components/ui/Toast';
+import Dashboard from './components/Dashboard';
+import UploadZone from './components/UploadZone';
+import CVLibrary from './components/CVLibrary';
+import Analytics from './components/Analytics';
+import ResearcherDetail from './components/ResearcherDetail';
+
+type View = 'dashboard' | 'upload' | 'library' | 'analytics' | 'researcher';
+
+function App() {
+  const [currentView, setCurrentView] = useState<View>('dashboard');
+  const [selectedResearcherId, setSelectedResearcherId] = useState<string | null>(null);
+
+  const handleViewResearcher = (id: string) => {
+    setSelectedResearcherId(id);
+    setCurrentView('researcher');
+  };
+
+  const handleBack = () => {
+    setCurrentView('library');
+    setSelectedResearcherId(null);
+  };
+
+  const navButtonClass = (view: View) =>
+    `flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
+      currentView === view
+        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-blue-500/30'
+        : 'bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-200'
+    }`;
+
+  return (
+    <ToastProvider>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100">
+        <header className="bg-white border-b-2 border-slate-100 shadow-sm sticky top-0 z-40">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div className="flex items-center justify-between">
+              <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-4 group">
+                <div className="bg-gradient-to-br from-lime-500 via-cyan-500 to-blue-600 p-4 rounded-2xl shadow-lg group-hover:shadow-xl transition-all group-hover:scale-105">
+                  <GraduationCap className="w-9 h-9 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-4xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
+                    AcademIQ
+                  </h1>
+                  <p className="text-slate-500 text-sm font-medium mt-0.5">
+                    Indexing brilliance, one CV at a time
+                  </p>
+                </div>
+              </button>
+
+              {currentView !== 'researcher' && (
+                <nav className="flex gap-3">
+                  <button onClick={() => setCurrentView('dashboard')} className={navButtonClass('dashboard')}>
+                    <BarChart3 className="w-5 h-5" />
+                    Dashboard
+                  </button>
+                  <button onClick={() => setCurrentView('library')} className={navButtonClass('library')}>
+                    <GraduationCap className="w-5 h-5" />
+                    Academics
+                  </button>
+                  <button onClick={() => setCurrentView('analytics')} className={navButtonClass('analytics')}>
+                    <BarChart3 className="w-5 h-5" />
+                    Analytics
+                  </button>
+                  <button onClick={() => setCurrentView('upload')} className={navButtonClass('upload')}>
+                    <Plus className="w-5 h-5" />
+                  </button>
+                </nav>
+              )}
+            </div>
+          </div>
+        </header>
+
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+          <div className="animate-fadeIn">
+            {currentView === 'dashboard' && <Dashboard />}
+            {currentView === 'upload' && <UploadZone />}
+            {currentView === 'library' && <CVLibrary onViewResearcher={handleViewResearcher} />}
+            {currentView === 'analytics' && <Analytics />}
+            {currentView === 'researcher' && selectedResearcherId && (
+              <ResearcherDetail researcherId={selectedResearcherId} onBack={handleBack} />
+            )}
+          </div>
+        </main>
+
+        <footer className="mt-20 border-t-2 border-slate-100 bg-white">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="text-center">
+              <p className="text-slate-700 font-semibold">AcademIQ &copy; {new Date().getFullYear()}</p>
+              <p className="text-xs text-slate-400 mt-2">
+                Database last updated: {new Date().toLocaleString()}
+              </p>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </ToastProvider>
+  );
+}
+
+export default App;
