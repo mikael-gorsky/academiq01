@@ -174,20 +174,43 @@ async function extractAllFromCV(cvText: string): Promise<ParsedCV> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
 
-  const systemPrompt = `You are an expert CV parser. Extract ALL information from this academic CV into structured JSON.
+  const systemPrompt = `You are an expert CV parser for an academic research database. Extract ALL information from this academic CV into structured JSON.
 
 CRITICAL INSTRUCTIONS:
 1. The person's NAME is at the top of the CV. Ignore titles like "Ph.D.", "Dr.", "Prof." when extracting first/last name.
 2. Extract EVERY education entry - look for Ph.D., M.A., M.Sc., B.A., B.Sc., certificates, etc.
-3. Extract EVERY publication - journals, conferences, books, book chapters, patents, etc.
-4. Extract EVERY work position - academic appointments, professional experience, administrative roles.
-5. For dates: use the year (e.g., "2024") or year range start (e.g., "2020" from "2020-present").
-6. Pay attention to section headers - they may be numbered (1. 2. 3.) or lettered (A. B. C.) or have various names.
+3. Extract EVERY work position - academic appointments, professional experience, administrative roles.
+4. For dates: use the year (e.g., "2024") or year range start (e.g., "2020" from "2020-present").
+5. Pay attention to section headers - they may be numbered (1. 2. 3.) or lettered (A. B. C.) or have various names.
+
+=== PUBLICATIONS - STRICT DEFINITION ===
+
+INCLUDE as publications ONLY these types of scholarly work authored by the candidate:
+- Journal articles (refereed and non-refereed)
+- Conference papers published in proceedings
+- Books authored or co-authored
+- Book chapters
+- Technical reports and working papers
+- Preprints
+
+NEVER INCLUDE AS PUBLICATIONS - THESE ARE NOT ACADEMIC PUBLICATIONS:
+- PATENTS (regular patents, provisional patents, patent applications) - EXCLUDE ALL
+- Articles written ABOUT the candidate by journalists
+- Press releases or media coverage about the candidate
+- Newspaper articles mentioning the candidate
+- Product documentation
+- Blog posts
+- Presentations or talks (unless published in proceedings)
+
+If a CV section is labeled "Patents", "H1. PATENTS", "Provisional Patents", etc. - DO NOT extract those items as publications.
+If an item mentions "Patent No.", "US Patent", "Provisional patent" - it is NOT a publication.
+
+=== END PUBLICATIONS DEFINITION ===
 
 SECTION NAME VARIATIONS TO RECOGNIZE:
 - Education: "Higher Education", "Academic Background", "Degrees", "Undergraduate and Graduate Studies"
 - Experience: "Academic Ranks", "Academic Experience", "Professional Experience", "Employment", "Positions"
-- Publications: "Publications", "Research Output", "Papers", "Articles"
+- Publications: "Publications", "Research Output", "Papers", "Articles", "Refereed Articles"
 - Grants: "Research Grants", "Funding", "Grants Awarded"
 - Teaching: "Teaching", "Courses Taught", "Teaching Experience"
 - Awards: "Awards", "Honors", "Scholarships", "Prizes"
@@ -219,7 +242,7 @@ Return ONLY valid JSON with this exact structure:
   "publications": [
     {
       "title": "full title",
-      "publicationType": "journal|conference|book|book_chapter|patent|magazine|report|other",
+      "publicationType": "journal|conference|book|book_chapter|technical_report|preprint|other",
       "venueName": "journal/conference/publisher name or null",
       "publicationYear": number,
       "volume": "string or null",
@@ -457,12 +480,12 @@ Deno.serve(async (req: Request) => {
         return new Response(
           JSON.stringify({
             error: "DUPLICATE_CV",
-            message: "This CV has already been indexed",
+            message: "This CV has already been processed",
             existingPerson: {
               id: existing.id,
               name: `${existing.first_name} ${existing.last_name}`,
               email: existing.email,
-              importedAt: existing.created_at,
+              processedAt: existing.created_at,
             },
           }),
           { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
