@@ -9,8 +9,8 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 const CONFIG = {
   // Model selection - use advanced model for structure analysis, cheaper for extraction
   models: {
-    advanced: "gpt-5.2-2025-12-11",         // For structure analysis and edge cases
-    standard: "gpt-4.1-mini-2025-04-14",    // For routine extraction tasks
+    advanced: "gpt-5.2-2025-12-11",    // For structure analysis and edge cases
+    standard: "gpt-4.1-2025-04-14",    // For routine extraction tasks
   },
   // When to use advanced model
   advancedModelThresholds: {
@@ -531,7 +531,6 @@ function buildLessonsContext(lessons: ParsingLesson[]): string {
 
 function detectAllSections(text: string, lessons: ParsingLesson[]): CVSection[] {
   const sections: CVSection[] = [];
-  const lowerText = text.toLowerCase();
   
   // Build section markers from lessons and defaults
   const sectionMarkers = buildSectionMarkers(lessons);
@@ -540,25 +539,62 @@ function detectAllSections(text: string, lessons: ParsingLesson[]): CVSection[] 
   const potentialSections: { name: string; index: number; category: string; confidence: number }[] = [];
   
   for (const marker of sectionMarkers) {
-    const regex = new RegExp(`(^|\\n)\\s*${escapeRegex(marker.pattern)}\\s*[:\\n]`, 'gim');
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      potentialSections.push({
-        name: marker.pattern,
-        index: match.index,
-        category: marker.category,
-        confidence: marker.confidence,
-      });
+    // Pattern handles multiple formats:
+    // 1. "EDUCATION" or "Education:" at start of line
+    // 2. "A. EDUCATION" or "B. ACADEMIC EXPERIENCE" (lettered sections)
+    // 3. "1. Education" or "2. Experience" (numbered sections)
+    // 4. Sections with or without colons
+    const patterns = [
+      // Standard: "Education" or "Education:" at line start
+      new RegExp(`(^|\\n)\\s*${escapeRegex(marker.pattern)}\\s*[:.]?\\s*(?=\\n|$)`, 'gim'),
+      // Lettered: "A. Education" or "B. EDUCATION"
+      new RegExp(`(^|\\n)\\s*[A-Z]\\.\\s*${escapeRegex(marker.pattern)}\\s*[:.]?\\s*(?=\\n|$)`, 'gim'),
+      // Numbered: "1. Education" or "2. EDUCATION"
+      new RegExp(`(^|\\n)\\s*\\d+\\.\\s*${escapeRegex(marker.pattern)}\\s*[:.]?\\s*(?=\\n|$)`, 'gim'),
+      // With underline or separator after
+      new RegExp(`(^|\\n)\\s*(?:[A-Z]\\.\\s*)?${escapeRegex(marker.pattern)}\\s*\\n[-=_]+`, 'gim'),
+    ];
+    
+    for (const regex of patterns) {
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        // Avoid duplicates at same position
+        const existingAtPosition = potentialSections.find(
+          s => Math.abs(s.index - match.index) < 10 && s.category === marker.category
+        );
+        if (!existingAtPosition) {
+          potentialSections.push({
+            name: marker.pattern,
+            index: match.index,
+            category: marker.category,
+            confidence: marker.confidence,
+          });
+        }
+      }
     }
   }
   
   // Sort by position
   potentialSections.sort((a, b) => a.index - b.index);
   
+  // Remove overlapping sections (keep highest confidence)
+  const filteredSections: typeof potentialSections = [];
+  for (const section of potentialSections) {
+    const overlapping = filteredSections.find(
+      s => Math.abs(s.index - section.index) < 50
+    );
+    if (!overlapping) {
+      filteredSections.push(section);
+    } else if (section.confidence > overlapping.confidence) {
+      const idx = filteredSections.indexOf(overlapping);
+      filteredSections[idx] = section;
+    }
+  }
+  
   // Convert to sections with content
-  for (let i = 0; i < potentialSections.length; i++) {
-    const current = potentialSections[i];
-    const next = potentialSections[i + 1];
+  for (let i = 0; i < filteredSections.length; i++) {
+    const current = filteredSections[i];
+    const next = filteredSections[i + 1];
     const endIndex = next ? next.index : text.length;
     
     sections.push({
@@ -570,6 +606,8 @@ function detectAllSections(text: string, lessons: ParsingLesson[]): CVSection[] 
       confidence: current.confidence,
     });
   }
+  
+  console.log(`Detected sections: ${sections.map(s => `${s.category}(${s.name})`).join(', ')}`);
   
   return sections;
 }
@@ -584,9 +622,9 @@ function buildSectionMarkers(lessons: ParsingLesson[]): { pattern: string; categ
     { pattern: 'scholarly works', category: 'publications', confidence: 0.85 },
     { pattern: 'papers', category: 'publications', confidence: 0.8 },
     { pattern: 'articles', category: 'publications', confidence: 0.75 },
-    { pattern: 'a\\. articles in refereed journals', category: 'publications', confidence: 0.95 },
-    { pattern: 'b\\. chapters in books', category: 'publications', confidence: 0.9 },
-    { pattern: 'c\\. papers presented', category: 'publications', confidence: 0.9 },
+    { pattern: 'articles in refereed journals', category: 'publications', confidence: 0.95 },
+    { pattern: 'chapters in books', category: 'publications', confidence: 0.9 },
+    { pattern: 'papers presented', category: 'publications', confidence: 0.9 },
     { pattern: 'conference proceedings', category: 'publications', confidence: 0.85 },
     { pattern: 'journal articles', category: 'publications', confidence: 0.9 },
     { pattern: 'peer-reviewed', category: 'publications', confidence: 0.85 },
@@ -598,11 +636,18 @@ function buildSectionMarkers(lessons: ParsingLesson[]): { pattern: string; categ
     { pattern: 'academic degrees', category: 'education', confidence: 0.95 },
     { pattern: 'qualifications', category: 'education', confidence: 0.8 },
     
-    // Experience
-    { pattern: 'experience', category: 'experience', confidence: 0.9 },
-    { pattern: 'employment', category: 'experience', confidence: 0.9 },
+    // Experience - Academic
+    { pattern: 'academic experience', category: 'experience', confidence: 0.95 },
     { pattern: 'academic appointments', category: 'experience', confidence: 0.95 },
+    { pattern: 'academic positions', category: 'experience', confidence: 0.95 },
+    { pattern: 'university positions', category: 'experience', confidence: 0.9 },
+    
+    // Experience - Professional/Industry
     { pattern: 'professional experience', category: 'experience', confidence: 0.95 },
+    { pattern: 'work experience', category: 'experience', confidence: 0.95 },
+    { pattern: 'employment history', category: 'experience', confidence: 0.95 },
+    { pattern: 'employment', category: 'experience', confidence: 0.9 },
+    { pattern: 'experience', category: 'experience', confidence: 0.85 },
     { pattern: 'positions held', category: 'experience', confidence: 0.9 },
     { pattern: 'work history', category: 'experience', confidence: 0.85 },
     { pattern: 'career', category: 'experience', confidence: 0.7 },
@@ -612,12 +657,16 @@ function buildSectionMarkers(lessons: ParsingLesson[]): { pattern: string; categ
     { pattern: 'funding', category: 'grants', confidence: 0.85 },
     { pattern: 'research grants', category: 'grants', confidence: 0.95 },
     { pattern: 'funded projects', category: 'grants', confidence: 0.9 },
+    { pattern: 'external funding', category: 'grants', confidence: 0.9 },
     
     // Teaching
     { pattern: 'teaching', category: 'teaching', confidence: 0.95 },
     { pattern: 'courses taught', category: 'teaching', confidence: 0.95 },
     { pattern: 'teaching experience', category: 'teaching', confidence: 0.95 },
     { pattern: 'instruction', category: 'teaching', confidence: 0.7 },
+    { pattern: 'educational courses development', category: 'teaching', confidence: 0.95 },
+    { pattern: 'courses developed', category: 'teaching', confidence: 0.95 },
+    { pattern: 'course development', category: 'teaching', confidence: 0.9 },
     
     // Supervision
     { pattern: 'supervision', category: 'supervision', confidence: 0.95 },
@@ -1007,6 +1056,68 @@ Return JSON:
   return allPublications;
 }
 
+// Fallback function to extract publications when no dedicated section is found
+async function extractPublicationsFromFullText(
+  cvText: string,
+  lessonsContext: string
+): Promise<PublicationEntry[]> {
+  // Use advanced model for this harder task
+  const systemPrompt = `You are analyzing an academic CV that does NOT have a clearly marked publications section.
+Your task is to find and extract ALL academic publications mentioned anywhere in the CV.
+
+Look for:
+- Journal articles (typically have: authors, year, title, journal name, volume, pages)
+- Conference papers (authors, year, title, conference/proceedings name)
+- Book chapters (authors, year, chapter title, book title, editors, publisher)
+- Working papers or preprints
+
+Publication patterns to recognize:
+- "Author1, A., Author2, B. (2020). Title. Journal Name, 15(3), 45-67."
+- References with DOIs or URLs
+- Numbered lists of papers
+- Papers mentioned in context like "published in..." or "appeared in..."
+
+IMPORTANT: Only extract actual publications, not:
+- Thesis/dissertation titles (unless published separately)
+- Course descriptions
+- Project descriptions
+
+${lessonsContext}
+
+Return JSON with all found publications:
+{
+  "publications": [
+    {
+      "title": "string",
+      "publicationType": "journal|conference|book|book_chapter|preprint|other",
+      "venueName": "string or null",
+      "publicationYear": number,
+      "volume": "string or null",
+      "issue": "string or null",
+      "pages": "string or null",
+      "coAuthors": ["name1", "name2"],
+      "citationCount": null,
+      "url": null
+    }
+  ]
+}
+
+If no publications are found, return {"publications": []}`;
+
+  // Truncate to reasonable size for the model
+  const truncatedText = cvText.length > 20000 
+    ? cvText.substring(0, 20000) + "\n[TEXT TRUNCATED]"
+    : cvText;
+
+  try {
+    const result = await callOpenAI(systemPrompt, truncatedText, CONFIG.models.advanced);
+    return result.publications || [];
+  } catch (error) {
+    console.error("Full-text publication extraction failed:", error);
+    return [];
+  }
+}
+
 // ============================================================================
 // EXPERIENCE EXTRACTION
 // ============================================================================
@@ -1215,7 +1326,7 @@ async function parseCV(
   
   if (publicationSections.length > 0) {
     const publicationsText = mergeSectionContents(publicationSections);
-    console.log(`Publications text length: ${publicationsText.length}`);
+    console.log(`Publications section found, text length: ${publicationsText.length}`);
     publications = await extractPublications(
       publicationsText,
       lessonsContext,
@@ -1228,6 +1339,19 @@ async function parseCV(
       if (!['publications', 'research publications'].includes(normalizedName)) {
         await incrementLessonOccurrence(supabase, 'section_naming', section.name);
         lessonsApplied.push(`Recognized "${section.name}" as publications section`);
+      }
+    }
+  } else {
+    // Fallback: search for publications in full text using AI
+    console.log("No publications section detected, searching in full text...");
+    const hasPublicationKeywords = /publication|journal|conference|proceedings|volume|issue/i.test(cvText);
+    const hasCitationPatterns = /\(\d{4}\)|,\s*\d{4}[,.\s]|Vol\.|pp\./i.test(cvText);
+    
+    if (hasPublicationKeywords || hasCitationPatterns) {
+      console.log("Publication patterns detected in text, attempting extraction from full CV");
+      publications = await extractPublicationsFromFullText(cvText, lessonsContext);
+      if (publications.length > 0) {
+        warnings.push(`Publications found via full-text search (no dedicated section detected)`);
       }
     }
   }
