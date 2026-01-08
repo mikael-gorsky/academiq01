@@ -9,8 +9,8 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 const CONFIG = {
   // Model selection - use advanced model for structure analysis, cheaper for extraction
   models: {
-    advanced: "gpt-5.2-2025-12-11",    // For structure analysis and edge cases
-    standard: "gpt-4.1-2025-04-14",    // For routine extraction tasks
+    advanced: "gpt-5.2-2025-12-11",         // For structure analysis and edge cases
+    standard: "gpt-4.1-mini-2025-04-14",    // For routine extraction tasks
   },
   // When to use advanced model
   advancedModelThresholds: {
