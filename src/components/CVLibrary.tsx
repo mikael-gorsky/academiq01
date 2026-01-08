@@ -102,7 +102,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
   const getHighestDegree = (person: PersonData) => {
     if (!person.education || person.education.length === 0) return 'N/A';
 
-    const degreeOrder = ['BSc', 'BA', 'MSc', 'MA', 'MBA', 'PhD', 'PostDoc'];
+    const degreeOrder = ['BSc', 'BA', 'MSc', 'MA', 'MBA', 'PhD'];
     const degrees = person.education.map((edu) => edu.degree_type || '');
 
     let highest = '';
