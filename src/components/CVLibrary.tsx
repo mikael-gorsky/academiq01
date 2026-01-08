@@ -512,8 +512,13 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
           {filteredAndSortedCVs.map((person) => {
             const position = getCurrentPosition(person);
             const lastPubYear = getLastPublicationYear(person);
-            const isRecentlyActive = lastPubYear && new Date().getFullYear() - lastPubYear <= 2;
             const isProlific = person.publications.length >= 50;
+
+            const importDate = new Date(person.imported_at);
+            const day = String(importDate.getDate()).padStart(2, '0');
+            const month = String(importDate.getMonth() + 1).padStart(2, '0');
+            const year = String(importDate.getFullYear()).slice(-2);
+            const formattedImportDate = `${day}/${month}/${year}`;
 
             return (
               <div
@@ -544,12 +549,9 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
                 </div>
 
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {isRecentlyActive && (
-                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-xs font-semibold">
-                      <Sparkles className="w-3 h-3" />
-                      Recently Active
-                    </span>
-                  )}
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-700 rounded text-xs">
+                    CV imported on {formattedImportDate}
+                  </span>
                   {isProlific && (
                     <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-semibold">
                       <TrendingUp className="w-3 h-3" />
