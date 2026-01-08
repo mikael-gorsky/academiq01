@@ -252,7 +252,7 @@ export async function getAnalyticsData() {
 
   const { data: education, error: eduError } = await supabase
     .from('academiq_education')
-    .select('person_id, award_date');
+    .select('person_id, award_date, degree_type');
 
   const { data: grants, error: grantsError } = await supabase
     .from('academiq_grants')
@@ -279,8 +279,14 @@ export async function getAnalyticsData() {
     ageDistribution[bin] = (ageDistribution[bin] || 0) + 1;
   });
 
+  const isTerminalDegree = (degreeType: string | null): boolean => {
+    if (!degreeType) return false;
+    const normalized = degreeType.toLowerCase().trim();
+    return /\b(ph\.?d|doctorate|m\.?sc|m\.?s|master|b\.?sc|b\.?s|bachelor|mba|ma|ba)\b/i.test(normalized);
+  };
+
   const yearsSinceDegreeData = persons?.map(p => {
-    const personEdu = education?.filter(e => e.person_id === p.id);
+    const personEdu = education?.filter(e => e.person_id === p.id && isTerminalDegree(e.degree_type));
     if (!personEdu || personEdu.length === 0) return null;
     const latestDegree = personEdu.reduce((latest, edu) => {
       if (!edu.award_date) return latest;
