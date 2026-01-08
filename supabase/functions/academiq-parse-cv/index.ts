@@ -10,6 +10,7 @@ const CONFIG = {
   model: "gpt-5.2-2025-12-11",
   maxRetries: 3,
   retryDelayMs: 1000,
+  apiTimeoutMs: 120000, // 2 minutes timeout for large CVs
 };
 
 const corsHeaders = {
@@ -26,12 +27,8 @@ interface ParsedCV {
   personal: {
     firstName: string;
     lastName: string;
-    email: string;
-    phone: string | null;
     birthYear: number | null;
     birthCountry: string | null;
-    maritalStatus: string | null;
-    numChildren: number | null;
   };
   education: Array<{
     degreeType: string;
@@ -100,6 +97,31 @@ interface ParsedCV {
 }
 
 // ============================================================================
+// NAME NORMALIZATION
+// ============================================================================
+
+function normalizeName(name: string): string {
+  if (!name) return '';
+  
+  // Handle names that are ALL CAPS or all lowercase
+  // Convert to proper case: first letter uppercase, rest lowercase
+  return name
+    .trim()
+    .toLowerCase()
+    .split(/[\s-]+/)
+    .map(part => {
+      if (part.length === 0) return '';
+      // Handle particles like "de", "von", "van" - keep lowercase
+      if (['de', 'von', 'van', 'der', 'den', 'la', 'le', 'du'].includes(part)) {
+        return part;
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(' ')
+    .replace(/\s+-\s+/g, '-'); // Fix spacing around hyphens
+}
+
+// ============================================================================
 // PDF TEXT EXTRACTION
 // ============================================================================
 
@@ -163,7 +185,32 @@ function removeSensitiveData(text: string): string {
   cleaned = cleaned.replace(/\b\d{2,3}[-.\s]\d{3,6}[-.\s]\d{3,4}\b/g, '[ID REDACTED]');
   // Remove home addresses
   cleaned = cleaned.replace(/Home\s*Address[:\s]+[^\n]+/gi, '[ADDRESS REDACTED]');
+  // Remove email addresses
+  cleaned = cleaned.replace(/[\w.-]+@[\w.-]+\.\w+/g, '[EMAIL REDACTED]');
   return cleaned;
+}
+
+// ============================================================================
+// FETCH WITH TIMEOUT
+// ============================================================================
+
+async function fetchWithTimeout(
+  url: string, 
+  options: RequestInit, 
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ============================================================================
@@ -182,6 +229,7 @@ CRITICAL INSTRUCTIONS:
 3. Extract EVERY work position - academic appointments, professional experience, administrative roles.
 4. For dates: use the year (e.g., "2024") or year range start (e.g., "2020" from "2020-present").
 5. Pay attention to section headers - they may be numbered (1. 2. 3.) or lettered (A. B. C.) or have various names.
+6. DO NOT extract email addresses or phone numbers - we do not collect personal contact information.
 
 === PUBLICATIONS - STRICT DEFINITION ===
 
@@ -220,12 +268,8 @@ Return ONLY valid JSON with this exact structure:
   "personal": {
     "firstName": "string",
     "lastName": "string", 
-    "email": "string or empty",
-    "phone": "string or null",
     "birthYear": number or null,
-    "birthCountry": "string or null",
-    "maritalStatus": "string or null",
-    "numChildren": number or null
+    "birthCountry": "string or null"
   },
   "education": [
     {
@@ -309,51 +353,79 @@ Return ONLY valid JSON with this exact structure:
   ]
 }`;
 
+  let lastError: Error | null = null;
+
   for (let attempt = 1; attempt <= CONFIG.maxRetries; attempt++) {
     try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
+      console.log(`API call attempt ${attempt}/${CONFIG.maxRetries}...`);
+      
+      const response = await fetchWithTimeout(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: CONFIG.model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: `Extract all information from this CV:\n\n${cvText}` },
+            ],
+            temperature: 0.1,
+            response_format: { type: "json_object" },
+          }),
         },
-        body: JSON.stringify({
-          model: CONFIG.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Extract all information from this CV:\n\n${cvText}` },
-          ],
-          temperature: 0.1,
-          response_format: { type: "json_object" },
-        }),
-      });
+        CONFIG.apiTimeoutMs
+      );
 
-      if (response.status === 429 && attempt < CONFIG.maxRetries) {
+      if (response.status === 429) {
         const waitTime = Math.pow(2, attempt) * CONFIG.retryDelayMs;
-        console.log(`Rate limited, waiting ${waitTime}ms...`);
+        console.log(`Rate limited (429), waiting ${waitTime}ms before retry...`);
+        lastError = new Error("API rate limit exceeded");
         await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+
+      if (response.status === 408 || response.status === 504) {
+        console.log(`Timeout error (${response.status}), retrying...`);
+        lastError = new Error(`API timeout (status ${response.status})`);
+        await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelayMs));
         continue;
       }
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`API error: ${response.status} - ${errorText}`);
+        console.error(`API error ${response.status}: ${errorText.substring(0, 500)}`);
+        throw new Error(`OpenAI API error: ${response.status} - ${errorText.substring(0, 200)}`);
       }
 
       const result = await response.json();
-      const parsed = JSON.parse(result.choices[0].message.content);
       
-      // Ensure all required fields exist with defaults
+      if (!result.choices || !result.choices[0] || !result.choices[0].message) {
+        throw new Error("Invalid API response structure - missing choices");
+      }
+
+      const content = result.choices[0].message.content;
+      if (!content) {
+        throw new Error("Empty response content from API");
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (parseError) {
+        throw new Error(`Failed to parse JSON response: ${parseError instanceof Error ? parseError.message : 'Unknown parse error'}`);
+      }
+      
+      // Normalize names and ensure all required fields exist with defaults
       return {
         personal: {
-          firstName: parsed.personal?.firstName || '',
-          lastName: parsed.personal?.lastName || '',
-          email: parsed.personal?.email || '',
-          phone: parsed.personal?.phone || null,
+          firstName: normalizeName(parsed.personal?.firstName || ''),
+          lastName: normalizeName(parsed.personal?.lastName || ''),
           birthYear: parsed.personal?.birthYear || null,
           birthCountry: parsed.personal?.birthCountry || null,
-          maritalStatus: parsed.personal?.maritalStatus || null,
-          numChildren: parsed.personal?.numChildren || null,
         },
         education: parsed.education || [],
         publications: parsed.publications || [],
@@ -366,13 +438,25 @@ Return ONLY valid JSON with this exact structure:
       };
 
     } catch (error) {
-      if (attempt === CONFIG.maxRetries) throw error;
-      console.log(`Attempt ${attempt} failed, retrying...`);
-      await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelayMs));
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      // Check for abort/timeout
+      if (lastError.name === 'AbortError') {
+        console.error(`Request timed out after ${CONFIG.apiTimeoutMs}ms on attempt ${attempt}`);
+        lastError = new Error(`Request timed out after ${CONFIG.apiTimeoutMs / 1000} seconds. The CV may be too large.`);
+      } else {
+        console.error(`Attempt ${attempt} failed:`, lastError.message);
+      }
+      
+      if (attempt < CONFIG.maxRetries) {
+        const waitTime = Math.pow(2, attempt) * CONFIG.retryDelayMs;
+        console.log(`Waiting ${waitTime}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
     }
   }
 
-  throw new Error("All retry attempts failed");
+  throw lastError || new Error("All retry attempts failed");
 }
 
 // ============================================================================
@@ -380,16 +464,36 @@ Return ONLY valid JSON with this exact structure:
 // ============================================================================
 
 Deno.serve(async (req: Request) => {
+  const startTime = Date.now();
+  
   try {
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 200, headers: corsHeaders });
     }
 
-    const { pdfFilename } = await req.json();
+    // Parse request
+    let pdfFilename: string;
+    try {
+      const body = await req.json();
+      pdfFilename = body.pdfFilename;
+    } catch (e) {
+      return new Response(
+        JSON.stringify({ 
+          error: "INVALID_REQUEST", 
+          message: "Invalid JSON in request body",
+          stage: "request_parsing"
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     if (!pdfFilename) {
       return new Response(
-        JSON.stringify({ error: "MISSING_FILENAME", message: "PDF filename is required" }),
+        JSON.stringify({ 
+          error: "MISSING_FILENAME", 
+          message: "PDF filename is required",
+          stage: "validation"
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -401,6 +505,7 @@ Deno.serve(async (req: Request) => {
 
     // Download PDF
     console.log("Downloading PDF:", pdfFilename);
+    const downloadStart = Date.now();
     const { data: fileData, error: downloadError } = await supabase.storage
       .from('academiq-cvs')
       .download(pdfFilename);
@@ -408,13 +513,20 @@ Deno.serve(async (req: Request) => {
     if (downloadError || !fileData) {
       console.error("Download error:", downloadError);
       return new Response(
-        JSON.stringify({ error: "PDF_READ_FAILED", message: "Unable to read PDF file" }),
+        JSON.stringify({ 
+          error: "PDF_DOWNLOAD_FAILED", 
+          message: `Unable to download PDF file: ${downloadError?.message || 'File not found'}`,
+          stage: "pdf_download",
+          filename: pdfFilename
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    console.log(`PDF downloaded in ${Date.now() - downloadStart}ms`);
 
     // Extract text
-    console.log("Extracting text...");
+    console.log("Extracting text from PDF...");
+    const extractStart = Date.now();
     const arrayBuffer = await fileData.arrayBuffer();
     let cvText: string;
     
@@ -423,14 +535,24 @@ Deno.serve(async (req: Request) => {
     } catch (error) {
       console.error("PDF parse error:", error);
       return new Response(
-        JSON.stringify({ error: "PDF_PARSE_FAILED", message: "Failed to extract text from PDF" }),
+        JSON.stringify({ 
+          error: "PDF_PARSE_FAILED", 
+          message: `Failed to extract text from PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          stage: "pdf_extraction"
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    console.log(`Text extracted in ${Date.now() - extractStart}ms`);
 
     if (cvText.trim().length < 100) {
       return new Response(
-        JSON.stringify({ error: "NO_TEXT", message: "PDF contains no readable text" }),
+        JSON.stringify({ 
+          error: "NO_TEXT", 
+          message: "PDF contains no readable text or is too short",
+          stage: "text_validation",
+          textLength: cvText.trim().length
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -440,14 +562,32 @@ Deno.serve(async (req: Request) => {
     console.log(`CV text length: ${cvText.length} characters`);
 
     // Extract everything in one call
-    console.log("Extracting CV data...");
-    const startTime = Date.now();
-    const parsedData = await extractAllFromCV(cvText);
-    const elapsed = Date.now() - startTime;
+    console.log("Calling AI for CV extraction...");
+    const aiStart = Date.now();
+    let parsedData: ParsedCV;
+    
+    try {
+      parsedData = await extractAllFromCV(cvText);
+    } catch (error) {
+      console.error("AI extraction error:", error);
+      return new Response(
+        JSON.stringify({ 
+          error: "AI_EXTRACTION_FAILED", 
+          message: `AI extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          stage: "ai_extraction",
+          cvTextLength: cvText.length,
+          elapsedMs: Date.now() - startTime
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    const aiElapsed = Date.now() - aiStart;
+    const totalElapsed = Date.now() - startTime;
 
-    console.log(`=== EXTRACTION COMPLETE (${elapsed}ms) ===`);
+    console.log(`=== EXTRACTION COMPLETE ===`);
+    console.log(`AI call: ${aiElapsed}ms, Total: ${totalElapsed}ms`);
     console.log(`Name: ${parsedData.personal.firstName} ${parsedData.personal.lastName}`);
-    console.log(`Email: ${parsedData.personal.email}`);
     console.log(`Education: ${parsedData.education.length} entries`);
     console.log(`Publications: ${parsedData.publications.length} entries`);
     console.log(`Experience: ${parsedData.experience.length} entries`);
@@ -462,48 +602,56 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({
           error: "INCOMPLETE_DATA",
           message: "Could not extract name from CV",
+          stage: "data_validation",
           debug: { textPreview: cvText.substring(0, 500) }
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Check for duplicate
-    if (parsedData.personal.email) {
-      const { data: existing } = await supabase
-        .from("academiq_persons")
-        .select("id, first_name, last_name, email, created_at")
-        .eq("email", parsedData.personal.email)
-        .maybeSingle();
+    // Check for duplicate by name (since we no longer use email)
+    const { data: existing } = await supabase
+      .from("academiq_persons")
+      .select("id, first_name, last_name, created_at")
+      .eq("first_name", parsedData.personal.firstName)
+      .eq("last_name", parsedData.personal.lastName)
+      .maybeSingle();
 
-      if (existing) {
-        return new Response(
-          JSON.stringify({
-            error: "DUPLICATE_CV",
-            message: "This CV has already been processed",
-            existingPerson: {
-              id: existing.id,
-              name: `${existing.first_name} ${existing.last_name}`,
-              email: existing.email,
-              processedAt: existing.created_at,
-            },
-          }),
-          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
+    if (existing) {
+      return new Response(
+        JSON.stringify({
+          error: "DUPLICATE_CV",
+          message: "A person with this name has already been processed",
+          existingPerson: {
+            id: existing.id,
+            name: `${existing.first_name} ${existing.last_name}`,
+            processedAt: existing.created_at,
+          },
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    return new Response(JSON.stringify(parsedData), {
+    return new Response(JSON.stringify({
+      ...parsedData,
+      _metadata: {
+        aiExtractionMs: aiElapsed,
+        totalProcessingMs: totalElapsed,
+        cvTextLength: cvText.length,
+      }
+    }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Unexpected error:", error);
     return new Response(
       JSON.stringify({
-        error: "PARSE_ERROR",
-        message: error instanceof Error ? error.message : "Unknown error",
+        error: "UNEXPECTED_ERROR",
+        message: error instanceof Error ? error.message : "Unknown error occurred",
+        stage: "unknown",
+        elapsedMs: Date.now() - startTime
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
