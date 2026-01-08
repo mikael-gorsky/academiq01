@@ -237,7 +237,7 @@ export async function getAnalyticsData() {
 
   const { data: publications, error: pubsError } = await supabase
     .from('academiq_publications')
-    .select('person_id, publication_year, citation_count');
+    .select('person_id, publication_year');
 
   const { data: education, error: eduError } = await supabase
     .from('academiq_education')
@@ -253,7 +253,6 @@ export async function getAnalyticsData() {
 
   const totalPersons = persons?.length || 0;
   const totalPublications = publications?.length || 0;
-  const totalCitations = publications?.reduce((sum, pub) => sum + (pub.citation_count || 0), 0) || 0;
   const totalGrants = grants?.length || 0;
 
   const currentYear = new Date().getFullYear();
@@ -371,10 +370,8 @@ export async function getAnalyticsData() {
   return {
     totalPersons,
     totalPublications,
-    totalCitations,
     totalGrants,
     avgPublicationsPerCV: totalPersons > 0 ? totalPublications / totalPersons : 0,
-    avgCitationsPerCV: totalPersons > 0 ? totalCitations / totalPersons : 0,
     averageAge,
     ageDistribution,
     avgYearsSinceDegree,

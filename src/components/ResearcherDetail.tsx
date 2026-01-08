@@ -32,7 +32,7 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [pubSort, setPubSort] = useState<'year-desc' | 'year-asc' | 'citations'>('year-desc');
+  const [pubSort, setPubSort] = useState<'year-desc' | 'year-asc'>('year-desc');
 
   useEffect(() => {
     if (researcherId) {
@@ -92,8 +92,7 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
 
   const sortedPublications = [...(researcher.publications || [])].sort((a, b) => {
     if (pubSort === 'year-desc') return b.publication_year - a.publication_year;
-    if (pubSort === 'year-asc') return a.publication_year - b.publication_year;
-    return (b.citation_count || 0) - (a.citation_count || 0);
+    return a.publication_year - b.publication_year;
   });
 
   const sortedEducation = [...(researcher.education || [])].sort((a, b) => {
@@ -246,7 +245,6 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
             >
               <option value="year-desc">Year (newest first)</option>
               <option value="year-asc">Year (oldest first)</option>
-              <option value="citations">Citations (highest first)</option>
             </select>
           </div>
           <div className="space-y-4">
@@ -270,11 +268,6 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
                         ({pub.publication_year})
                       </span>
                     </p>
-                    {pub.citation_count !== null && pub.citation_count > 0 && (
-                      <p className="text-sm text-slate-500 mt-1">
-                        Cited {pub.citation_count} times
-                      </p>
-                    )}
                     {pub.url && (
                       <a
                         href={pub.url}

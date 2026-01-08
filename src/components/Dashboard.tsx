@@ -5,10 +5,8 @@ import { getAnalyticsData } from '../lib/database';
 interface AnalyticsData {
   totalPersons: number;
   totalPublications: number;
-  totalCitations: number;
   totalGrants: number;
   avgPublicationsPerCV: number;
-  avgCitationsPerCV: number;
   averageAge: number;
   ageDistribution: Record<string, number>;
   avgYearsSinceDegree: number;

@@ -32,7 +32,6 @@ interface PersonData {
   }>;
   publications: Array<{
     title: string;
-    citation_count?: number;
     publication_year: number;
   }>;
   experience: Array<{
@@ -95,30 +94,32 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
     return currentExp || person.experience[0];
   };
 
-  const getTotalCitations = (person: PersonData) => {
-    return person.publications.reduce((sum, pub) => sum + (pub.citation_count || 0), 0);
-  };
-
   const getLastPublicationYear = (person: PersonData) => {
     if (person.publications.length === 0) return null;
     return Math.max(...person.publications.map((pub) => pub.publication_year));
   };
 
   const getHighestDegree = (person: PersonData) => {
+    if (!person.education || person.education.length === 0) return 'N/A';
+
     const degreeOrder = ['BSc', 'BA', 'MSc', 'MA', 'MBA', 'PhD', 'PostDoc'];
     const degrees = person.education.map((edu) => edu.degree_type || '');
-    let highest = degrees[0] || '';
+
+    let highest = '';
     let highestIndex = -1;
 
     degrees.forEach((degree) => {
-      const index = degreeOrder.findIndex((d) => degree.includes(d));
+      const normalizedDegree = degree.replace(/\./g, '').replace(/\s+/g, '');
+      const index = degreeOrder.findIndex((d) =>
+        normalizedDegree.toLowerCase().includes(d.toLowerCase())
+      );
       if (index > highestIndex) {
         highestIndex = index;
         highest = degree;
       }
     });
 
-    return highest;
+    return highest || degrees[0] || 'N/A';
   };
 
   const filteredAndSortedCVs = useMemo(() => {
@@ -510,10 +511,8 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredAndSortedCVs.map((person) => {
             const position = getCurrentPosition(person);
-            const citations = getTotalCitations(person);
             const lastPubYear = getLastPublicationYear(person);
             const isRecentlyActive = lastPubYear && new Date().getFullYear() - lastPubYear <= 2;
-            const isHighlyCited = citations >= 100;
             const isProlific = person.publications.length >= 50;
 
             return (
@@ -551,12 +550,6 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
                       Recently Active
                     </span>
                   )}
-                  {isHighlyCited && (
-                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs font-semibold">
-                      <Award className="w-3 h-3" />
-                      Highly Cited
-                    </span>
-                  )}
                   {isProlific && (
                     <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-semibold">
                       <TrendingUp className="w-3 h-3" />
@@ -569,22 +562,18 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1">
                       <GraduationCap className="w-4 h-4 text-cyan-600" />
-                      {getHighestDegree(person) || 'N/A'}
+                      {getHighestDegree(person)}
                     </span>
                     <span className="flex items-center gap-1">
                       <BookOpen className="w-4 h-4 text-emerald-600" />
                       {person.publications.length} pubs
                     </span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Award className="w-4 h-4 text-amber-600" />
-                      {citations.toLocaleString()} citations
-                    </span>
-                    {lastPubYear && (
-                      <span className="text-xs text-slate-500">Last pub: {lastPubYear}</span>
-                    )}
-                  </div>
+                  {lastPubYear && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Last publication: {lastPubYear}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-3 border-t border-slate-200">
