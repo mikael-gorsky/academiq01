@@ -356,14 +356,14 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <GraduationCap className="w-6 h-6 text-cyan-600" />
-              <h2 className="text-2xl font-bold text-slate-800">Processed Researchers</h2>
+              <h2 className="text-2xl font-bold text-slate-800">Faculty</h2>
             </div>
             <div className="flex gap-3">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search processed researchers..."
+                  placeholder="Search faculty..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10 pr-10 py-2 w-80 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
@@ -407,9 +407,9 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <GraduationCap className="w-6 h-6 text-cyan-600" />
-            <h2 className="text-2xl font-bold text-slate-800">Indexed Researchers</h2>
+            <h2 className="text-2xl font-bold text-slate-800">Faculty</h2>
             <span className="px-3 py-1 bg-cyan-100 text-cyan-800 rounded-full text-sm font-semibold">
-              {filteredAndSortedCVs.length} {filteredAndSortedCVs.length === 1 ? 'researcher' : 'researchers'}
+              {filteredAndSortedCVs.length} {filteredAndSortedCVs.length === 1 ? 'member' : 'members'}
             </span>
             {selectedIds.size > 0 && (
               <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold">
@@ -432,7 +432,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search indexed researchers..."
+                placeholder="Search faculty..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 pr-10 py-2 w-80 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
@@ -611,6 +611,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
             return (
               <div
                 key={person.id}
+                onClick={() => onViewResearcher(person.id)}
                 className={`p-4 border rounded-lg cursor-pointer hover:border-cyan-400 hover:shadow-md transition-all hover:scale-[1.02] bg-white relative group ${
                   isSelected ? 'border-cyan-500 bg-cyan-50' : 'border-slate-200'
                 }`}
@@ -654,7 +655,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
                 </div>
 
                 <div className="flex flex-wrap gap-2 mb-3">
-                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-700 rounded text-xs">
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-gradient-to-r from-emerald-100 to-cyan-100 text-slate-700 rounded text-xs">
                     CV imported on {formattedImportDate}
                   </span>
                   {isProlific && (
@@ -683,14 +684,11 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
                   )}
                 </div>
 
-                <div
-                  onClick={() => onViewResearcher(person.id)}
-                  className="pt-3 border-t border-slate-200"
-                >
-                  <button className="flex items-center gap-2 text-cyan-600 hover:text-cyan-700 font-medium text-sm group">
+                <div className="pt-3 border-t border-slate-200">
+                  <span className="flex items-center gap-2 text-cyan-600 font-medium text-sm">
                     View Profile
                     <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </button>
+                  </span>
                 </div>
               </div>
             );
