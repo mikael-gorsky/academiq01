@@ -128,12 +128,12 @@ export default function UploadZone() {
         });
 
         const name = `${parsedData.personal.firstName} ${parsedData.personal.lastName}`;
-        showToast(`Brilliance successfully indexed! ${name} added to database.`, 'success');
+        showToast(`Brilliance successfully processed! ${name} added to database.`, 'success');
 
         playCompleteSound();
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to process file';
-        const isDuplicate = errorMessage.includes('already been indexed');
+        const isDuplicate = errorMessage.includes('already been processed');
 
         setFileQueue(prev => {
           const updated = [...prev];

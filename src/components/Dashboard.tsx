@@ -102,7 +102,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h2 className="text-3xl font-bold">Brilliance Insights</h2>
-              <p className="text-white/90 text-sm font-medium mt-1">Comprehensive analytics across all indexed researchers</p>
+              <p className="text-white/90 text-sm font-medium mt-1">Comprehensive analytics across all processed researchers</p>
             </div>
           </div>
         </div>
@@ -116,7 +116,7 @@ export default function Dashboard() {
               <Users className="w-6 h-6 text-white mb-3" />
               <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Total Researchers</p>
               <p className="text-4xl font-black text-white">{analytics.totalPersons}</p>
-              <p className="text-xs text-white/80 mt-2 font-semibold">Indexed in database</p>
+              <p className="text-xs text-white/80 mt-2 font-semibold">Processed in database</p>
             </div>
           </div>
 

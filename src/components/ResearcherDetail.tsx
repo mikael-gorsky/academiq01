@@ -132,7 +132,7 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
           className="flex items-center gap-2 text-cyan-600 hover:text-cyan-700 font-medium mb-6 transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
-          Back to Indexed Researchers
+          Back to Processed Researchers
         </button>
 
         <div className="flex items-start justify-between">
@@ -166,7 +166,7 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
               )}
               <span className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
-                Indexed on {new Date(researcher.imported_at).toLocaleDateString()}
+                Processed on {new Date(researcher.imported_at).toLocaleDateString()}
               </span>
             </div>
           </div>

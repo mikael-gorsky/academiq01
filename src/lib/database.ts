@@ -109,7 +109,7 @@ export async function insertCV(formData: CVFormData): Promise<string> {
 
   if (personError) {
     if (personError.code === '23505') {
-      throw new Error(`This CV has already been indexed. A person with email "${normalizedEmail}" already exists in the database.`);
+      throw new Error(`This CV has already been processed. A person with email "${normalizedEmail}" already exists in the database.`);
     }
     throw personError;
   }
@@ -553,7 +553,7 @@ export async function checkDuplicateCV(email: string | null): Promise<void> {
     .maybeSingle();
 
   if (existingPerson) {
-    throw new Error(`This CV has already been indexed. ${existingPerson.first_name} ${existingPerson.last_name} (${existingPerson.email}) already exists in the database.`);
+    throw new Error(`This CV has already been processed. ${existingPerson.first_name} ${existingPerson.last_name} (${existingPerson.email}) already exists in the database.`);
   }
 }
 
@@ -580,7 +580,7 @@ export async function saveParsedCV(parsedData: ParsedCVData, pdfFilename: string
 
   if (personError) {
     if (personError.code === '23505') {
-      throw new Error(`This CV has already been indexed. A person with email "${normalizedEmail}" already exists in the database.`);
+      throw new Error(`This CV has already been processed. A person with email "${normalizedEmail}" already exists in the database.`);
     }
     throw personError;
   }

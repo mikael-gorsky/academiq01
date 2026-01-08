@@ -93,7 +93,7 @@ export default function CVPreview({ parsedData, onConfirm, onCancel, isSubmittin
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-            <h2 className="text-2xl font-bold text-slate-800">Review Indexed Information</h2>
+            <h2 className="text-2xl font-bold text-slate-800">Review Processed Information</h2>
           </div>
           <button
             onClick={onCancel}

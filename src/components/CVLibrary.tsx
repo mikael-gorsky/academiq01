@@ -342,7 +342,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
       <div className="bg-white rounded-xl shadow-sm p-12 border border-slate-200">
         <div className="text-center">
           <GraduationCap className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-          <h3 className="text-xl font-bold text-slate-700 mb-2">Ready to index some brilliance?</h3>
+          <h3 className="text-xl font-bold text-slate-700 mb-2">Ready to process some brilliance?</h3>
           <p className="text-slate-500 mb-6">Upload your first academic CV to start building your database</p>
         </div>
       </div>
@@ -356,14 +356,14 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <GraduationCap className="w-6 h-6 text-cyan-600" />
-              <h2 className="text-2xl font-bold text-slate-800">Indexed Researchers</h2>
+              <h2 className="text-2xl font-bold text-slate-800">Processed Researchers</h2>
             </div>
             <div className="flex gap-3">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search indexed researchers..."
+                  placeholder="Search processed researchers..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10 pr-10 py-2 w-80 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
