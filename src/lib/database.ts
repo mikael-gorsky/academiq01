@@ -230,6 +230,17 @@ export async function deletePerson(id: string): Promise<void> {
   }
 }
 
+export async function deletePersons(ids: string[]): Promise<void> {
+  const { error } = await supabase
+    .from('academiq_persons')
+    .delete()
+    .in('id', ids);
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function getAnalyticsData() {
   const { data: persons, error: personsError } = await supabase
     .from('academiq_persons')

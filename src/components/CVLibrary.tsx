@@ -11,8 +11,10 @@ import {
   Sparkles,
   TrendingUp,
   Trash2,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
-import { getAllPersons, deletePerson } from '../lib/database';
+import { getAllPersons, deletePerson, deletePersons } from '../lib/database';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
 
@@ -55,6 +57,8 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
   const [showFilters, setShowFilters] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [personToDelete, setPersonToDelete] = useState<PersonData | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
   const [sortBy, setSortBy] = useState<
     | 'name-asc'
     | 'name-desc'
@@ -238,6 +242,11 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
     try {
       await deletePerson(personToDelete.id);
       setPersons(prev => prev.filter(p => p.id !== personToDelete.id));
+      setSelectedIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(personToDelete.id);
+        return newSet;
+      });
       showToast(`${personToDelete.first_name} ${personToDelete.last_name} has been deleted.`, 'success');
     } catch (err) {
       showToast(
@@ -247,6 +256,51 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
     } finally {
       setShowDeleteDialog(false);
       setPersonToDelete(null);
+    }
+  };
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredAndSortedCVs.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredAndSortedCVs.map(p => p.id)));
+    }
+  };
+
+  const handleBulkDeleteClick = () => {
+    if (selectedIds.size === 0) return;
+    setShowBulkDeleteDialog(true);
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+
+    try {
+      const idsToDelete = Array.from(selectedIds);
+      await deletePersons(idsToDelete);
+      setPersons(prev => prev.filter(p => !selectedIds.has(p.id)));
+      const count = selectedIds.size;
+      setSelectedIds(new Set());
+      showToast(`${count} ${count === 1 ? 'researcher' : 'researchers'} deleted successfully.`, 'success');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Failed to delete researchers',
+        'error'
+      );
+    } finally {
+      setShowBulkDeleteDialog(false);
     }
   };
 
@@ -357,9 +411,23 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
             <span className="px-3 py-1 bg-cyan-100 text-cyan-800 rounded-full text-sm font-semibold">
               {filteredAndSortedCVs.length} {filteredAndSortedCVs.length === 1 ? 'researcher' : 'researchers'}
             </span>
+            {selectedIds.size > 0 && (
+              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold">
+                {selectedIds.size} selected
+              </span>
+            )}
           </div>
 
           <div className="flex gap-3">
+            {selectedIds.size > 0 && (
+              <button
+                onClick={handleBulkDeleteClick}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete {selectedIds.size} {selectedIds.size === 1 ? 'researcher' : 'researchers'}
+              </button>
+            )}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
@@ -490,8 +558,26 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
         )}
 
         <div className="flex items-center justify-between mb-4">
-          <div className="text-sm text-slate-600">
-            Showing {filteredAndSortedCVs.length} of {persons.length} researchers
+          <div className="flex items-center gap-4">
+            <button
+              onClick={toggleSelectAll}
+              className="flex items-center gap-2 px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-sm"
+            >
+              {selectedIds.size === filteredAndSortedCVs.length ? (
+                <>
+                  <CheckSquare className="w-4 h-4 text-cyan-600" />
+                  Deselect All
+                </>
+              ) : (
+                <>
+                  <Square className="w-4 h-4" />
+                  Select All
+                </>
+              )}
+            </button>
+            <div className="text-sm text-slate-600">
+              Showing {filteredAndSortedCVs.length} of {persons.length} researchers
+            </div>
           </div>
           <select
             value={sortBy}
@@ -520,21 +606,40 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
             const year = String(importDate.getFullYear()).slice(-2);
             const formattedImportDate = `${day}/${month}/${year}`;
 
+            const isSelected = selectedIds.has(person.id);
+
             return (
               <div
                 key={person.id}
-                onClick={() => onViewResearcher(person.id)}
-                className="p-4 border border-slate-200 rounded-lg cursor-pointer hover:border-cyan-400 hover:shadow-md transition-all hover:scale-[1.02] bg-white relative group"
+                className={`p-4 border rounded-lg cursor-pointer hover:border-cyan-400 hover:shadow-md transition-all hover:scale-[1.02] bg-white relative group ${
+                  isSelected ? 'border-cyan-500 bg-cyan-50' : 'border-slate-200'
+                }`}
               >
-                <button
-                  onClick={(e) => handleDeleteClick(e, person)}
-                  className="absolute top-3 right-3 p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                  title="Delete researcher"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="absolute top-3 right-3 flex gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleSelection(person.id);
+                    }}
+                    className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                    title={isSelected ? 'Deselect' : 'Select'}
+                  >
+                    {isSelected ? (
+                      <CheckSquare className="w-5 h-5 text-cyan-600" />
+                    ) : (
+                      <Square className="w-5 h-5 text-slate-400" />
+                    )}
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteClick(e, person)}
+                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                    title="Delete researcher"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
 
-                <div className="flex items-start justify-between mb-3 pr-8">
+                <div className="flex items-start justify-between mb-3 pr-20">
                   <div className="flex-1">
                     <h3 className="font-bold text-slate-800 text-lg">
                       {person.first_name} {person.last_name}
@@ -578,7 +683,10 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
                   )}
                 </div>
 
-                <div className="pt-3 border-t border-slate-200">
+                <div
+                  onClick={() => onViewResearcher(person.id)}
+                  className="pt-3 border-t border-slate-200"
+                >
                   <button className="flex items-center gap-2 text-cyan-600 hover:text-cyan-700 font-medium text-sm group">
                     View Profile
                     <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -600,6 +708,17 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
         title={personToDelete ? `Delete ${personToDelete.first_name} ${personToDelete.last_name}?` : 'Delete Researcher'}
         message="This will permanently delete this researcher and all associated data from the database."
         confirmText="Delete"
+        cancelText="Cancel"
+        confirmVariant="danger"
+      />
+
+      <ConfirmDialog
+        isOpen={showBulkDeleteDialog}
+        onClose={() => setShowBulkDeleteDialog(false)}
+        onConfirm={handleConfirmBulkDelete}
+        title={`Delete ${selectedIds.size} ${selectedIds.size === 1 ? 'researcher' : 'researchers'}?`}
+        message={`This will permanently delete ${selectedIds.size} ${selectedIds.size === 1 ? 'researcher' : 'researchers'} and all associated data from the database.`}
+        confirmText="Delete All"
         cancelText="Cancel"
         confirmVariant="danger"
       />
