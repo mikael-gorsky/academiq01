@@ -360,7 +360,7 @@ Return ONLY valid JSON with this exact structure:
       console.log(`API call attempt ${attempt}/${CONFIG.maxRetries}...`);
       
       const response = await fetchWithTimeout(
-        "https://api.openai.com/v1/chat/completions",
+        "https://api.openai.com/v1/responses",
         {
           method: "POST",
           headers: {
@@ -369,11 +369,11 @@ Return ONLY valid JSON with this exact structure:
           },
           body: JSON.stringify({
             model: CONFIG.model,
-            messages: [
-              { role: "system", content: systemPrompt },
+            input: [
+              { role: "developer", content: systemPrompt },
               { role: "user", content: `Extract all information from this CV:\n\n${cvText}` },
             ],
-            response_format: { type: "json_object" },
+            text: { format: { type: "json_object" } },
           }),
         },
         CONFIG.apiTimeoutMs
@@ -402,14 +402,24 @@ Return ONLY valid JSON with this exact structure:
 
       const result = await response.json();
       
-      if (!result.choices || !result.choices[0] || !result.choices[0].message) {
-        throw new Error("Invalid API response structure - missing choices");
+      // Responses API returns output array with output_text items
+      if (!result.output || !Array.isArray(result.output)) {
+        throw new Error("Invalid API response structure - missing output array");
       }
 
-      const content = result.choices[0].message.content;
-      if (!content) {
+      // Find the text output
+      const textOutput = result.output.find((item: any) => item.type === "message" && item.content);
+      if (!textOutput) {
+        throw new Error("No text output in API response");
+      }
+
+      // Extract text content from the message
+      const textContent = textOutput.content.find((c: any) => c.type === "output_text");
+      if (!textContent || !textContent.text) {
         throw new Error("Empty response content from API");
       }
+
+      const content = textContent.text;
 
       let parsed;
       try {
