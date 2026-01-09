@@ -6,21 +6,23 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 // CONFIGURATION
 // ============================================================================
 
-// LLM Provider: "gemini" or "openai"
-const LLM_PROVIDER = "gemini";
+// Available Gemini models
+const GEMINI_MODELS: Record<string, { name: string; tier: string }> = {
+  "gemini-3-pro-preview": { name: "Gemini 3 Pro", tier: "intelligent" },
+  "gemini-3-flash-preview": { name: "Gemini 3 Flash", tier: "balanced" },
+  "gemini-2.5-flash": { name: "Gemini 2.5 Flash", tier: "fast" },
+  "gemini-2.5-flash-lite": { name: "Gemini 2.5 Flash-Lite", tier: "ultrafast" },
+};
+
+const DEFAULT_MODEL = "gemini-3-flash-preview";
+const GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 
 const CONFIG = {
-  gemini: {
-    model: "gemini-3-flash-preview",
-    apiEndpoint: "https://generativelanguage.googleapis.com/v1beta",
-  },
-  openai: {
-    model: "gpt-4.1-mini",
-  },
   maxRetries: 2,
   retryDelayMs: 500,
-  apiTimeoutMs: 120000, // 120 seconds per chunk - Supabase allows 150s total
+  apiTimeoutMs: 120000, // 120 seconds per chunk
   chunkSize: 20000, // ~20K characters per chunk
+  heartbeatIntervalMs: 25000, // Send heartbeat every 25 seconds during LLM calls
 };
 
 const corsHeaders = {
@@ -126,17 +128,11 @@ interface ProgressEvent {
   details?: Record<string, any>;
 }
 
-interface ProcessingLog {
-  id?: string;
-  cv_filename: string;
-  started_at: string;
-  completed_at: string | null;
-  status: 'processing' | 'completed' | 'failed';
-  total_chunks: number;
-  processed_chunks: number;
-  log_entries: ProgressEvent[];
-  error: Record<string, any> | null;
-  result_summary: Record<string, any> | null;
+interface SpeedMetrics {
+  inputChars: number;
+  outputChars: number;
+  elapsedMs: number;
+  outputCharsPerSec: number;
 }
 
 // ============================================================================
@@ -158,7 +154,7 @@ class SSEWriter {
     this.controller = controller;
   }
 
-  async initLog(filename: string): Promise<string> {
+  async initLog(filename: string, model: string): Promise<string> {
     const { data, error } = await this.supabase
       .from('cv_processing_logs')
       .insert({
@@ -170,6 +166,7 @@ class SSEWriter {
         log_entries: [],
         error: null,
         result_summary: null,
+        model: model,
       })
       .select('id')
       .single();
@@ -203,12 +200,21 @@ class SSEWriter {
     const detailStr = details ? ` | ${JSON.stringify(details)}` : '';
     console.log(`[${stage}] ${message}${detailStr}`);
 
-    // Update database log
+    // Update database log (don't await to avoid blocking)
     if (this.logId) {
-      await this.supabase
+      this.supabase
         .from('cv_processing_logs')
         .update({ log_entries: this.logEntries })
-        .eq('id', this.logId);
+        .eq('id', this.logId)
+        .then(() => {})
+        .catch((e: any) => console.error('Log update failed:', e));
+    }
+  }
+
+  sendHeartbeat() {
+    if (this.controller) {
+      const event = JSON.stringify({ stage: 'heartbeat', timestamp: Date.now() });
+      this.controller.enqueue(this.encoder.encode(`data: ${event}\n\n`));
     }
   }
 
@@ -370,30 +376,25 @@ const HEADER_KEYWORDS: Record<string, string[]> = {
 function isHeader(line: string, prevLine: string, nextLine: string): { isHeader: boolean; type: string | null } {
   const trimmed = line.trim();
   
-  // Too long to be a header
   if (trimmed.length > 80 || trimmed.length < 2) {
     return { isHeader: false, type: null };
   }
 
-  // Contains patterns typical of content, not headers
-  if (/\(\d{4}\)/.test(trimmed)) return { isHeader: false, type: null }; // Year in parentheses
-  if (/pp?\.\s*\d+/.test(trimmed)) return { isHeader: false, type: null }; // Page numbers
-  if (/vol\.\s*\d+/i.test(trimmed)) return { isHeader: false, type: null }; // Volume numbers
-  if (trimmed.split(',').length > 3) return { isHeader: false, type: null }; // Too many commas (likely author list)
+  if (/\(\d{4}\)/.test(trimmed)) return { isHeader: false, type: null };
+  if (/pp?\.\s*\d+/.test(trimmed)) return { isHeader: false, type: null };
+  if (/vol\.\s*\d+/i.test(trimmed)) return { isHeader: false, type: null };
+  if (trimmed.split(',').length > 3) return { isHeader: false, type: null };
 
-  // Check formatting patterns
-  const hasLetterPrefix = /^[A-Z]\.\s+/i.test(trimmed); // "A. EDUCATION"
-  const hasNumberPrefix = /^\d{1,2}\.\s+/i.test(trimmed); // "1. EDUCATION"
-  const hasLetterNumberPrefix = /^[A-Z]\d+\.\s+/i.test(trimmed); // "G1. DOCTORAL STUDENTS"
+  const hasLetterPrefix = /^[A-Z]\.\s+/i.test(trimmed);
+  const hasNumberPrefix = /^\d{1,2}\.\s+/i.test(trimmed);
+  const hasLetterNumberPrefix = /^[A-Z]\d+\.\s+/i.test(trimmed);
   const isMostlyUppercase = (trimmed.replace(/[^a-zA-Z]/g, '').match(/[A-Z]/g)?.length || 0) > trimmed.replace(/[^a-zA-Z]/g, '').length * 0.5;
   const prevLineEmpty = !prevLine || prevLine.trim().length === 0;
 
-  // Check for keyword match
   const upperLine = trimmed.toUpperCase();
   for (const [type, keywords] of Object.entries(HEADER_KEYWORDS)) {
     for (const keyword of keywords) {
       if (upperLine.includes(keyword)) {
-        // Keyword match + formatting evidence = header
         if (hasLetterPrefix || hasNumberPrefix || isMostlyUppercase || prevLineEmpty) {
           return { isHeader: true, type };
         }
@@ -401,7 +402,6 @@ function isHeader(line: string, prevLine: string, nextLine: string): { isHeader:
     }
   }
 
-  // Strong formatting signals even without keyword match
   if ((hasLetterPrefix || hasNumberPrefix) && isMostlyUppercase && prevLineEmpty) {
     return { isHeader: true, type: 'unknown' };
   }
@@ -421,7 +421,6 @@ function detectSectionHeaders(text: string): SectionHeader[] {
 
     const result = isHeader(line, prevLine, nextLine);
     if (result.isHeader) {
-      // Skip subsection headers (like G1, G2 under main G section)
       const isSubsection = /^[A-Z]\d+\.\s+/i.test(line.trim());
       if (!isSubsection) {
         headers.push({
@@ -432,7 +431,7 @@ function detectSectionHeaders(text: string): SectionHeader[] {
       }
     }
 
-    charPosition += line.length + 1; // +1 for newline
+    charPosition += line.length + 1;
   }
 
   return headers;
@@ -446,11 +445,9 @@ function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: n
   const chunks: ChunkInfo[] = [];
   
   if (headers.length === 0) {
-    // No headers found - split by size at paragraph boundaries
     return splitByParagraphs(text, maxChunkSize);
   }
 
-  let currentChunkStart = 0;
   let currentChunkText = '';
   let currentStartSection: string | null = null;
   let chunkId = 1;
@@ -460,9 +457,7 @@ function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: n
     const nextHeaderPos = i < headers.length - 1 ? headers[i + 1].position : text.length;
     const sectionText = text.substring(header.position, nextHeaderPos);
 
-    // Would adding this section exceed chunk size?
     if (currentChunkText.length + sectionText.length > maxChunkSize && currentChunkText.length > 0) {
-      // Save current chunk
       chunks.push({
         id: chunkId++,
         text: currentChunkText,
@@ -470,11 +465,9 @@ function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: n
         charCount: currentChunkText.length,
       });
 
-      // Start new chunk with this section
       currentChunkText = sectionText;
       currentStartSection = header.type;
     } else {
-      // Add section to current chunk
       if (currentChunkText.length === 0) {
         currentStartSection = header.type;
       }
@@ -482,7 +475,6 @@ function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: n
     }
   }
 
-  // Don't forget the last chunk
   if (currentChunkText.length > 0) {
     chunks.push({
       id: chunkId,
@@ -492,7 +484,6 @@ function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: n
     });
   }
 
-  // Handle text before first header
   if (headers.length > 0 && headers[0].position > 0) {
     const preHeaderText = text.substring(0, headers[0].position);
     if (preHeaderText.trim().length > 100) {
@@ -502,7 +493,6 @@ function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: n
         startSection: 'personal',
         charCount: preHeaderText.length,
       });
-      // Renumber chunks
       chunks.forEach((chunk, idx) => chunk.id = idx + 1);
     }
   }
@@ -543,30 +533,7 @@ function splitByParagraphs(text: string, maxChunkSize: number): ChunkInfo[] {
 }
 
 // ============================================================================
-// FETCH WITH TIMEOUT
-// ============================================================================
-
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit,
-  timeoutMs: number
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    return response;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-// ============================================================================
-// LLM EXTRACTION - SINGLE CHUNK
+// LLM EXTRACTION WITH HEARTBEAT
 // ============================================================================
 
 async function extractFromChunk(
@@ -574,8 +541,9 @@ async function extractFromChunk(
   chunkId: number,
   totalChunks: number,
   continuingSection: string | null,
+  model: string,
   sse: SSEWriter
-): Promise<Partial<ParsedCV>> {
+): Promise<{ parsed: Partial<ParsedCV>; metrics: SpeedMetrics }> {
   
   const systemPrompt = `You are an expert CV parser for an academic research database. Extract information from this CV chunk into structured JSON.
 
@@ -606,68 +574,60 @@ Return ONLY valid JSON with this structure (include only fields found in this ch
 
 If a category has no entries in this chunk, return an empty array for it.`;
 
-  const startTime = Date.now();
+  const modelInfo = GEMINI_MODELS[model] || GEMINI_MODELS[DEFAULT_MODEL];
   
-  await sse.send('llm_call', `Sending chunk ${chunkId}/${totalChunks} to ${LLM_PROVIDER}`, {
+  await sse.send('llm_call', `Sending chunk ${chunkId}/${totalChunks} to ${modelInfo.name}`, {
     chunkId,
     totalChunks,
-    charCount: chunkText.length,
+    inputChars: chunkText.length,
     continuingSection,
-    provider: LLM_PROVIDER,
-    model: LLM_PROVIDER === 'gemini' ? CONFIG.gemini.model : CONFIG.openai.model,
+    model,
+    modelName: modelInfo.name,
+    modelTier: modelInfo.tier,
   });
 
+  const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
+  if (!geminiApiKey) throw new Error("GEMINI_API_KEY not configured");
+
+  // Start heartbeat interval
+  const heartbeatInterval = setInterval(() => {
+    sse.sendHeartbeat();
+  }, CONFIG.heartbeatIntervalMs);
+
+  const startTime = Date.now();
   let response: Response;
 
-  if (LLM_PROVIDER === "gemini") {
-    const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!geminiApiKey) throw new Error("GEMINI_API_KEY not configured");
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CONFIG.apiTimeoutMs);
 
-    response = await fetchWithTimeout(
-      `${CONFIG.gemini.apiEndpoint}/models/${CONFIG.gemini.model}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": geminiApiKey,
-        },
-        body: JSON.stringify({
-          contents: [{
-            role: "user",
-            parts: [{ text: `${systemPrompt}\n\nCV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}` }]
-          }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
+    try {
+      response = await fetch(
+        `${GEMINI_API_ENDPOINT}/models/${model}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": geminiApiKey,
           },
-        }),
-      },
-      CONFIG.apiTimeoutMs
-    );
-  } else {
-    const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!openaiApiKey) throw new Error("OPENAI_API_KEY not configured");
-
-    response = await fetchWithTimeout(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${openaiApiKey}`,
-        },
-        body: JSON.stringify({
-          model: CONFIG.openai.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `CV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}` },
-          ],
-          temperature: 0.1,
-          response_format: { type: "json_object" },
-        }),
-      },
-      CONFIG.apiTimeoutMs
-    );
+          body: JSON.stringify({
+            contents: [{
+              role: "user",
+              parts: [{ text: `${systemPrompt}\n\nCV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}` }]
+            }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.1,
+            },
+          }),
+          signal: controller.signal,
+        }
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } finally {
+    clearInterval(heartbeatInterval);
   }
 
   const elapsed = Date.now() - startTime;
@@ -679,24 +639,19 @@ If a category has no entries in this chunk, return an empty array for it.`;
       status: response.status,
       error: errorText.substring(0, 500),
       elapsedMs: elapsed,
+      model,
     });
-    throw new Error(`${LLM_PROVIDER} API error: ${response.status} - ${errorText.substring(0, 200)}`);
+    throw new Error(`Gemini API error: ${response.status} - ${errorText.substring(0, 200)}`);
   }
 
   const result = await response.json();
-  let content: string;
-
-  if (LLM_PROVIDER === "gemini") {
-    if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
-      throw new Error("Invalid Gemini response structure");
-    }
-    content = result.candidates[0].content.parts[0].text;
-  } else {
-    if (!result.choices?.[0]?.message?.content) {
-      throw new Error("Invalid OpenAI response structure");
-    }
-    content = result.choices[0].message.content;
+  
+  if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
+    throw new Error("Invalid Gemini response structure");
   }
+  
+  const content = result.candidates[0].content.parts[0].text;
+  const outputChars = content.length;
 
   let parsed: Partial<ParsedCV>;
   try {
@@ -710,6 +665,14 @@ If a category has no entries in this chunk, return an empty array for it.`;
     throw new Error(`JSON parse failed for chunk ${chunkId}: ${e instanceof Error ? e.message : 'Unknown'}`);
   }
 
+  // Calculate speed metrics
+  const metrics: SpeedMetrics = {
+    inputChars: chunkText.length,
+    outputChars,
+    elapsedMs: elapsed,
+    outputCharsPerSec: elapsed > 0 ? Math.round((outputChars / elapsed) * 1000) : 0,
+  };
+
   // Count extracted items
   const itemCounts: Record<string, number> = {};
   for (const [key, value] of Object.entries(parsed)) {
@@ -721,12 +684,13 @@ If a category has no entries in this chunk, return an empty array for it.`;
   await sse.send('llm_response', `Chunk ${chunkId}/${totalChunks} processed`, {
     chunkId,
     totalChunks,
-    elapsedMs: elapsed,
+    model,
+    modelName: modelInfo.name,
     itemCounts,
-    provider: LLM_PROVIDER,
+    speed: metrics,
   });
 
-  return parsed;
+  return { parsed, metrics };
 }
 
 // ============================================================================
@@ -747,7 +711,6 @@ function mergeResults(chunks: Partial<ParsedCV>[]): ParsedCV {
   };
 
   for (const chunk of chunks) {
-    // Personal info - take from first chunk that has it
     if (chunk.personal) {
       if (!merged.personal.firstName && chunk.personal.firstName) {
         merged.personal.firstName = normalizeName(chunk.personal.firstName);
@@ -763,7 +726,6 @@ function mergeResults(chunks: Partial<ParsedCV>[]): ParsedCV {
       }
     }
 
-    // Arrays - concatenate
     if (chunk.education) merged.education.push(...chunk.education);
     if (chunk.publications) merged.publications.push(...chunk.publications);
     if (chunk.experience) merged.experience.push(...chunk.experience);
@@ -774,13 +736,8 @@ function mergeResults(chunks: Partial<ParsedCV>[]): ParsedCV {
     if (chunk.awards) merged.awards.push(...chunk.awards);
   }
 
-  // Deduplicate publications by title+year
   merged.publications = deduplicateByKey(merged.publications, p => `${p.title?.toLowerCase()}|${p.publicationYear}`);
-  
-  // Deduplicate education by institution+degree
   merged.education = deduplicateByKey(merged.education, e => `${e.institution?.toLowerCase()}|${e.degreeType?.toLowerCase()}`);
-  
-  // Deduplicate experience by institution+position+dates
   merged.experience = deduplicateByKey(merged.experience, e => `${e.institution?.toLowerCase()}|${e.positionTitle?.toLowerCase()}|${e.startDate}`);
 
   return merged;
@@ -827,9 +784,26 @@ Deno.serve(async (req: Request) => {
       try {
         // Parse request
         let pdfFilename: string;
+        let model: string;
+        
         try {
           const body = await req.json();
           pdfFilename = body.pdfFilename;
+          
+          // Model selection with backward compatibility
+          if (body.model && GEMINI_MODELS[body.model]) {
+            model = body.model;
+          } else if (body.model) {
+            // Invalid model specified
+            await sse.send('warning', `Unknown model "${body.model}", using default`, { 
+              requestedModel: body.model,
+              defaultModel: DEFAULT_MODEL,
+            });
+            model = DEFAULT_MODEL;
+          } else {
+            // No model specified - use default (backward compatible)
+            model = DEFAULT_MODEL;
+          }
         } catch (e) {
           await sse.send('error', 'Invalid JSON in request body', { stage: 'request_parsing' });
           sse.sendError({ error: 'INVALID_REQUEST', message: 'Invalid JSON in request body' });
@@ -842,8 +816,14 @@ Deno.serve(async (req: Request) => {
           return;
         }
 
-        await sse.send('start', 'Processing started', { filename: pdfFilename, provider: LLM_PROVIDER });
-        await sse.initLog(pdfFilename);
+        const modelInfo = GEMINI_MODELS[model];
+        await sse.send('start', 'Processing started', { 
+          filename: pdfFilename, 
+          model,
+          modelName: modelInfo.name,
+          modelTier: modelInfo.tier,
+        });
+        await sse.initLog(pdfFilename, model);
 
         // Download PDF
         await sse.send('pdf_download', 'Downloading PDF...', { filename: pdfFilename });
@@ -919,21 +899,23 @@ Deno.serve(async (req: Request) => {
 
         // Process each chunk
         const chunkResults: Partial<ParsedCV>[] = [];
+        const allMetrics: SpeedMetrics[] = [];
         let lastSection: string | null = null;
 
         for (const chunk of chunks) {
           try {
             const continuingSection = chunk.startSection || lastSection;
-            const result = await extractFromChunk(
+            const { parsed, metrics } = await extractFromChunk(
               chunk.text,
               chunk.id,
               chunks.length,
               continuingSection,
+              model,
               sse
             );
-            chunkResults.push(result);
+            chunkResults.push(parsed);
+            allMetrics.push(metrics);
             
-            // Track the last section for continuity
             if (chunk.startSection) {
               lastSection = chunk.startSection;
             }
@@ -944,7 +926,6 @@ Deno.serve(async (req: Request) => {
               chunkId: chunk.id,
               error: error instanceof Error ? error.message : 'Unknown',
             });
-            // Continue with other chunks instead of failing completely
             chunkResults.push({});
           }
         }
@@ -955,6 +936,12 @@ Deno.serve(async (req: Request) => {
 
         const totalMs = Date.now() - startTime;
         
+        // Calculate aggregate speed metrics
+        const totalInputChars = allMetrics.reduce((sum, m) => sum + m.inputChars, 0);
+        const totalOutputChars = allMetrics.reduce((sum, m) => sum + m.outputChars, 0);
+        const totalLlmMs = allMetrics.reduce((sum, m) => sum + m.elapsedMs, 0);
+        const avgOutputCharsPerSec = totalLlmMs > 0 ? Math.round((totalOutputChars / totalLlmMs) * 1000) : 0;
+
         // Create summary
         const resultSummary = {
           personal: `${mergedResult.personal.firstName} ${mergedResult.personal.lastName}`,
@@ -968,7 +955,14 @@ Deno.serve(async (req: Request) => {
           awards: mergedResult.awards.length,
           totalMs,
           chunks: chunks.length,
-          provider: LLM_PROVIDER,
+          model,
+          modelName: modelInfo.name,
+          speed: {
+            totalInputChars,
+            totalOutputChars,
+            totalLlmMs,
+            avgOutputCharsPerSec,
+          },
         };
 
         await sse.send('complete', 'Processing complete', resultSummary);
