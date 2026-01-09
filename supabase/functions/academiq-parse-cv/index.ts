@@ -373,7 +373,6 @@ Return ONLY valid JSON with this exact structure:
               { role: "system", content: systemPrompt },
               { role: "user", content: `Extract all information from this CV:\n\n${cvText}` },
             ],
-            temperature: 0.1,
             response_format: { type: "json_object" },
           }),
         },
