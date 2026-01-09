@@ -609,29 +609,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Check for duplicate by name (since we no longer use email)
-    const { data: existing } = await supabase
-      .from("academiq_persons")
-      .select("id, first_name, last_name, created_at")
-      .eq("first_name", parsedData.personal.firstName)
-      .eq("last_name", parsedData.personal.lastName)
-      .maybeSingle();
-
-    if (existing) {
-      return new Response(
-        JSON.stringify({
-          error: "DUPLICATE_CV",
-          message: "A person with this name has already been processed",
-          existingPerson: {
-            id: existing.id,
-            name: `${existing.first_name} ${existing.last_name}`,
-            processedAt: existing.created_at,
-          },
-        }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     return new Response(JSON.stringify({
       ...parsedData,
       _metadata: {

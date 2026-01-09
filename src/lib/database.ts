@@ -526,11 +526,6 @@ export async function parseCV(pdfFilename: string): Promise<ParsedCVData> {
         console.error('Text Preview:', errorData.debug.textPreview);
       }
 
-      // Handle duplicate CV error specifically
-      if (response.status === 409 && errorData.error === 'DUPLICATE_CV') {
-        throw new Error(`A person with this name has already been processed. ${errorData.existingPerson?.name || ''} was already imported on ${errorData.existingPerson?.processedAt ? new Date(errorData.existingPerson.processedAt).toLocaleDateString() : 'a previous date'}.`);
-      }
-
       throw new Error(errorData.message || 'Failed to parse CV');
     }
 
@@ -546,19 +541,34 @@ export async function parseCV(pdfFilename: string): Promise<ParsedCVData> {
   }
 }
 
-export async function checkDuplicateCV(email: string | null): Promise<void> {
-  if (!email || email.trim() === '') return;
+export async function checkDuplicateCV(pdfFilename: string): Promise<void> {
+  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-duplicate-cv`;
+  const headers = {
+    'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    'Content-Type': 'application/json',
+  };
 
-  const normalizedEmail = email.trim().toLowerCase();
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ pdfFilename }),
+    });
 
-  const { data: existingPerson } = await supabase
-    .from('academiq_persons')
-    .select('id, first_name, last_name, email')
-    .ilike('email', normalizedEmail)
-    .maybeSingle();
+    if (!response.ok) {
+      const errorData = await response.json();
 
-  if (existingPerson) {
-    throw new Error(`This CV has already been processed. ${existingPerson.first_name} ${existingPerson.last_name} (${existingPerson.email}) already exists in the database.`);
+      if (response.status === 409 && errorData.error === 'DUPLICATE_CV') {
+        throw new Error(`A person with this name has already been processed. ${errorData.existingPerson?.name || ''} was already imported on ${errorData.existingPerson?.processedAt ? new Date(errorData.existingPerson.processedAt).toLocaleDateString() : 'a previous date'}.`);
+      }
+
+      throw new Error(errorData.message || 'Failed to check for duplicates');
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to check for duplicates');
   }
 }
 
