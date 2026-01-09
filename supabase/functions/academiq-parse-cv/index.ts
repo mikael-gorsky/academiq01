@@ -3,12 +3,12 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 
 const OPENAI_MODELS: Record<string, { name: string; tier: string }> = {
-  "gpt-5-mini": { name: "GPT-5 Mini", tier: "ultrafast" },
-  "gpt-5": { name: "GPT-5", tier: "intelligent" },
-  "gpt-5.2": { name: "GPT-5.2", tier: "advanced" },
+  "gpt-4o-mini": { name: "GPT-4o Mini", tier: "ultrafast" },
+  "gpt-4o": { name: "GPT-4o", tier: "intelligent" },
+  "gpt-4-turbo": { name: "GPT-4 Turbo", tier: "advanced" },
 };
 
-const DEFAULT_MODEL = "gpt-5-mini";
+const DEFAULT_MODEL = "gpt-4o-mini";
 const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
 
 const CONFIG = {
@@ -569,19 +569,18 @@ ${chunkText}`;
 
     const requestBody: any = {
       model: model,
-      input: inputPrompt,
+      messages: [
+        {
+          role: "user",
+          content: inputPrompt
+        }
+      ],
+      response_format: { type: "json_object" },
     };
-
-    if (model === 'gpt-5.2') {
-      requestBody.reasoning = { effort: "none" };
-      requestBody.text = { verbosity: "medium" };
-    } else if (model === 'gpt-5-mini' || model === 'gpt-5') {
-      requestBody.text = { verbosity: "medium" };
-    }
 
     try {
       response = await fetch(
-        `${OPENAI_API_ENDPOINT}/responses`,
+        `${OPENAI_API_ENDPOINT}/chat/completions`,
         {
           method: "POST",
           headers: {
@@ -631,11 +630,16 @@ ${chunkText}`;
 
   const result = await response.json();
 
-  if (!result.output?.content) {
-    throw new Error("Invalid OpenAI response structure");
+  if (!result.choices?.[0]?.message?.content) {
+    await sse.send('llm_error', `Invalid response structure from chunk ${chunkId}`, {
+      chunkId,
+      responseKeys: Object.keys(result),
+      responsePreview: JSON.stringify(result).substring(0, 300),
+    });
+    throw new Error(`Invalid OpenAI response structure. Keys: ${Object.keys(result).join(', ')}`);
   }
 
-  const content = result.output.content;
+  const content = result.choices[0].message.content;
   const outputChars = content.length;
 
   let parsed: Partial<ParsedCV>;
