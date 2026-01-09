@@ -7,7 +7,7 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 // ============================================================================
 
 const CONFIG = {
-  model: "gpt-5-mini-2025-08-07",
+  model: "gpt-4.1-mini",
   maxRetries: 2,
   retryDelayMs: 500,
   apiTimeoutMs: 50000, // 50 seconds - must fit within Supabase 60s function limit
@@ -360,7 +360,7 @@ Return ONLY valid JSON with this exact structure:
       console.log(`API call attempt ${attempt}/${CONFIG.maxRetries}...`);
       
       const response = await fetchWithTimeout(
-        "https://api.openai.com/v1/responses",
+        "https://api.openai.com/v1/chat/completions",
         {
           method: "POST",
           headers: {
@@ -369,11 +369,12 @@ Return ONLY valid JSON with this exact structure:
           },
           body: JSON.stringify({
             model: CONFIG.model,
-            input: [
-              { role: "developer", content: systemPrompt },
+            messages: [
+              { role: "system", content: systemPrompt },
               { role: "user", content: `Extract all information from this CV:\n\n${cvText}` },
             ],
-            text: { format: { type: "json_object" } },
+            temperature: 0.1,
+            response_format: { type: "json_object" },
           }),
         },
         CONFIG.apiTimeoutMs
@@ -402,24 +403,14 @@ Return ONLY valid JSON with this exact structure:
 
       const result = await response.json();
       
-      // Responses API returns output array with output_text items
-      if (!result.output || !Array.isArray(result.output)) {
-        throw new Error("Invalid API response structure - missing output array");
+      if (!result.choices || !result.choices[0] || !result.choices[0].message) {
+        throw new Error("Invalid API response structure - missing choices");
       }
 
-      // Find the text output
-      const textOutput = result.output.find((item: any) => item.type === "message" && item.content);
-      if (!textOutput) {
-        throw new Error("No text output in API response");
-      }
-
-      // Extract text content from the message
-      const textContent = textOutput.content.find((c: any) => c.type === "output_text");
-      if (!textContent || !textContent.text) {
+      const content = result.choices[0].message.content;
+      if (!content) {
         throw new Error("Empty response content from API");
       }
-
-      const content = textContent.text;
 
       let parsed;
       try {
