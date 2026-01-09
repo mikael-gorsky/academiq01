@@ -584,7 +584,6 @@ If a category has no entries in this chunk, return an empty array for it.`;
                 content: `CV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}`
               }
             ],
-            temperature: 0.1,
             reasoning_effort: "low",
             response_format: { type: "json_object" },
           }),
