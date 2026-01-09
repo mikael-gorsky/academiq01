@@ -3,12 +3,12 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 
 const OPENAI_MODELS: Record<string, { name: string; tier: string }> = {
-  "gpt-4o-mini": { name: "GPT-4o Mini", tier: "ultrafast" },
-  "gpt-4o": { name: "GPT-4o", tier: "intelligent" },
-  "gpt-4-turbo": { name: "GPT-4 Turbo", tier: "advanced" },
+  "gpt-5-mini": { name: "GPT-5 Mini", tier: "ultrafast" },
+  "gpt-5": { name: "GPT-5", tier: "intelligent" },
+  "gpt-5.2": { name: "GPT-5.2", tier: "advanced" },
 };
 
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MODEL = "gpt-5-mini";
 const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
 
 const CONFIG = {
