@@ -497,7 +497,17 @@ export interface ParsedCVData {
   }>;
 }
 
-export async function parseCV(pdfFilename: string): Promise<ParsedCVData> {
+export interface ParseProgressEvent {
+  stage: string;
+  message: string;
+  timestamp?: number;
+  details?: Record<string, any>;
+}
+
+export async function parseCV(
+  pdfFilename: string,
+  onProgress?: (event: ParseProgressEvent) => void
+): Promise<ParsedCVData> {
   const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq-parse-cv`;
   const headers = {
     'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
@@ -505,7 +515,7 @@ export async function parseCV(pdfFilename: string): Promise<ParsedCVData> {
   };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 180000);
+  const timeoutId = setTimeout(() => controller.abort(), 420000); // 7 minutes
 
   try {
     const response = await fetch(apiUrl, {
@@ -518,23 +528,75 @@ export async function parseCV(pdfFilename: string): Promise<ParsedCVData> {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const errorData = await response.json();
-
-      if (errorData.debug) {
-        console.error('CV Parsing Debug Info:');
-        console.error('Text Length:', errorData.debug.textLength);
-        console.error('Text Preview:', errorData.debug.textPreview);
-      }
-
-      throw new Error(errorData.message || 'Failed to parse CV');
+      const errorText = await response.text();
+      throw new Error(errorText || 'Failed to parse CV');
     }
 
-    return await response.json();
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult: ParsedCVData | null = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Process complete SSE messages
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6); // Remove "data: " prefix
+          if (jsonStr.trim()) {
+            try {
+              const event = JSON.parse(jsonStr);
+              
+              // Report progress (skip heartbeats unless handler wants them)
+              if (onProgress && event.stage !== 'complete' && event.stage !== 'heartbeat') {
+                onProgress(event);
+              }
+
+              // Handle final result
+              if (event.stage === 'complete' && event.result) {
+                finalResult = event.result;
+              }
+
+              // Handle error from stream
+              if (event.stage === 'error') {
+                throw new Error(event.error?.message || event.message || 'CV parsing failed');
+              }
+            } catch (parseError) {
+              // Skip malformed JSON lines, but rethrow actual errors
+              if (parseError instanceof SyntaxError) {
+                console.warn('Skipping malformed SSE data:', jsonStr.substring(0, 100));
+              } else {
+                throw parseError;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!finalResult) {
+      throw new Error('No result received from CV parser');
+    }
+
+    return finalResult;
+
   } catch (error) {
     clearTimeout(timeoutId);
 
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('CV parsing is taking longer than expected. Please try again with a shorter CV or contact support.');
+      throw new Error('CV parsing timed out. Please try again or contact support.');
     }
 
     throw error;
