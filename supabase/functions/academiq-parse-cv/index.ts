@@ -570,11 +570,12 @@ ${chunkText}`;
     const requestBody: any = {
       model: model,
       input: inputPrompt,
-      modalities: { text: { type: "json_object" } },
     };
 
     if (model === 'gpt-5.2') {
       requestBody.reasoning = { effort: "none" };
+      requestBody.text = { verbosity: "medium" };
+    } else if (model === 'gpt-5-mini' || model === 'gpt-5') {
       requestBody.text = { verbosity: "medium" };
     }
 
