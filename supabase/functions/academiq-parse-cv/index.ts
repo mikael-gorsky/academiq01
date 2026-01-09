@@ -507,8 +507,8 @@ async function extractFromChunk(
   model: string,
   sse: SSEWriter
 ): Promise<{ parsed: Partial<ParsedCV>; metrics: SpeedMetrics }> {
-  
-  const systemPrompt = `You are an expert CV parser for an academic research database. Extract information from this CV chunk into structured JSON.
+
+  const inputPrompt = `You are an expert CV parser for an academic research database. Extract information from this CV chunk into structured JSON.
 
 ${continuingSection ? `NOTE: This chunk continues from a previous section. The text may start mid-section (type: ${continuingSection}). Parse accordingly.` : ''}
 
@@ -535,7 +535,11 @@ Return ONLY valid JSON with this structure (include only fields found in this ch
   "awards": []
 }
 
-If a category has no entries in this chunk, return an empty array for it.`;
+If a category has no entries in this chunk, return an empty array for it.
+
+CV CHUNK ${chunkId}/${totalChunks}:
+
+${chunkText}`;
 
   const modelInfo = OPENAI_MODELS[model] || OPENAI_MODELS[DEFAULT_MODEL];
 
@@ -563,29 +567,27 @@ If a category has no entries in this chunk, return an empty array for it.`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.apiTimeoutMs);
 
+    const requestBody: any = {
+      model: model,
+      input: inputPrompt,
+      modalities: { text: { type: "json_object" } },
+    };
+
+    if (model === 'gpt-5.2') {
+      requestBody.reasoning = { effort: "none" };
+      requestBody.text = { verbosity: "medium" };
+    }
+
     try {
       response = await fetch(
-        `${OPENAI_API_ENDPOINT}/chat/completions`,
+        `${OPENAI_API_ENDPOINT}/responses`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${openaiApiKey}`,
           },
-          body: JSON.stringify({
-            model: model,
-            messages: [
-              {
-                role: "system",
-                content: systemPrompt
-              },
-              {
-                role: "user",
-                content: `CV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}`
-              }
-            ],
-            response_format: { type: "json_object" },
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal,
         }
       );
@@ -628,11 +630,11 @@ If a category has no entries in this chunk, return an empty array for it.`;
 
   const result = await response.json();
 
-  if (!result.choices?.[0]?.message?.content) {
+  if (!result.output?.content) {
     throw new Error("Invalid OpenAI response structure");
   }
 
-  const content = result.choices[0].message.content;
+  const content = result.output.content;
   const outputChars = content.length;
 
   let parsed: Partial<ParsedCV>;
