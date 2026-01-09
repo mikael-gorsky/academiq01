@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { GraduationCap, Plus, BarChart3 } from 'lucide-react';
 import { ToastProvider } from './components/ui/Toast';
 import Dashboard from './components/Dashboard';
@@ -6,12 +6,35 @@ import UploadZone from './components/UploadZone';
 import CVLibrary from './components/CVLibrary';
 import Analytics from './components/Analytics';
 import ResearcherDetail from './components/ResearcherDetail';
+import { DatabaseSetup } from './components/DatabaseSetup';
 
 type View = 'dashboard' | 'upload' | 'library' | 'analytics' | 'researcher';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [selectedResearcherId, setSelectedResearcherId] = useState<string | null>(null);
+  const [databaseReady, setDatabaseReady] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkDatabase = async () => {
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/academiq_persons?select=id&limit=1`,
+          {
+            headers: {
+              'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            },
+          }
+        );
+        setDatabaseReady(response.ok);
+      } catch {
+        setDatabaseReady(false);
+      }
+    };
+
+    checkDatabase();
+  }, []);
 
   const handleViewResearcher = (id: string) => {
     setSelectedResearcherId(id);
@@ -29,6 +52,21 @@ function App() {
         ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-blue-500/30'
         : 'bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-200'
     }`;
+
+  if (databaseReady === null) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-slate-50 to-blue-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-600 border-t-transparent mx-auto mb-4"></div>
+          <p className="text-slate-600 font-medium">Checking database...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (databaseReady === false) {
+    return <DatabaseSetup />;
+  }
 
   return (
     <ToastProvider>
