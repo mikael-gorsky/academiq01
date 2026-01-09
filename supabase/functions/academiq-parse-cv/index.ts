@@ -575,6 +575,7 @@ ${chunkText}`;
           content: inputPrompt
         }
       ],
+      reasoning_effort: "none",
       response_format: { type: "json_object" },
     };
 
@@ -629,6 +630,17 @@ ${chunkText}`;
   }
 
   const result = await response.json();
+
+  if (result.error) {
+    await sse.send('llm_error', `OpenAI API error for chunk ${chunkId}`, {
+      chunkId,
+      errorType: result.error.type,
+      errorCode: result.error.code,
+      errorMessage: result.error.message,
+      model,
+    });
+    throw new Error(`OpenAI API error: ${result.error.message}`);
+  }
 
   if (!result.choices?.[0]?.message?.content) {
     await sse.send('llm_error', `Invalid response structure from chunk ${chunkId}`, {
@@ -934,7 +946,7 @@ Deno.serve(async (req: Request) => {
         await sse.complete(resultSummary);
 
         const { data: existing } = await supabase
-          .from("persons")
+          .from("academiq_persons")
           .select("id, first_name, last_name, created_at")
           .eq("first_name", mergedResult.personal.firstName)
           .eq("last_name", mergedResult.personal.lastName)
