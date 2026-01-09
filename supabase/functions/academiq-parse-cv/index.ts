@@ -7,10 +7,10 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 // ============================================================================
 
 const CONFIG = {
-  model: "gpt-5.2-2025-12-11",
-  maxRetries: 3,
-  retryDelayMs: 1000,
-  apiTimeoutMs: 120000, // 2 minutes timeout for large CVs
+  model: "gpt-5-mini-2025-08-07",
+  maxRetries: 2,
+  retryDelayMs: 500,
+  apiTimeoutMs: 50000, // 50 seconds - must fit within Supabase 60s function limit
 };
 
 const corsHeaders = {
@@ -443,7 +443,9 @@ Return ONLY valid JSON with this exact structure:
       // Check for abort/timeout
       if (lastError.name === 'AbortError') {
         console.error(`Request timed out after ${CONFIG.apiTimeoutMs}ms on attempt ${attempt}`);
-        lastError = new Error(`Request timed out after ${CONFIG.apiTimeoutMs / 1000} seconds. The CV may be too large.`);
+        lastError = new Error(`CV processing timed out. This CV may be too long to process within the allowed time limit. Try a shorter CV or contact support.`);
+        // Don't retry on timeout - we're hitting infrastructure limits
+        break;
       } else {
         console.error(`Attempt ${attempt} failed:`, lastError.message);
       }
@@ -606,6 +608,29 @@ Deno.serve(async (req: Request) => {
           debug: { textPreview: cvText.substring(0, 500) }
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Check for duplicate by name (since we no longer use email)
+    const { data: existing } = await supabase
+      .from("academiq_persons")
+      .select("id, first_name, last_name, created_at")
+      .eq("first_name", parsedData.personal.firstName)
+      .eq("last_name", parsedData.personal.lastName)
+      .maybeSingle();
+
+    if (existing) {
+      return new Response(
+        JSON.stringify({
+          error: "DUPLICATE_CV",
+          message: "A person with this name has already been processed",
+          existingPerson: {
+            id: existing.id,
+            name: `${existing.first_name} ${existing.last_name}`,
+            processedAt: existing.created_at,
+          },
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
