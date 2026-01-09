@@ -6,8 +6,20 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 // CONFIGURATION
 // ============================================================================
 
+// LLM Provider: "gemini" or "openai"
+const LLM_PROVIDER = "gemini";
+
 const CONFIG = {
-  model: "gpt-4.1-mini",
+  // Gemini settings
+  gemini: {
+    model: "gemini-3-flash-preview",
+    apiEndpoint: "https://generativelanguage.googleapis.com/v1beta",
+  },
+  // OpenAI settings (commented out - switch LLM_PROVIDER to "openai" to use)
+  openai: {
+    model: "gpt-4.1-mini",
+  },
+  // Common settings
   maxRetries: 2,
   retryDelayMs: 500,
   apiTimeoutMs: 50000, // 50 seconds - must fit within Supabase 60s function limit
@@ -218,8 +230,14 @@ async function fetchWithTimeout(
 // ============================================================================
 
 async function extractAllFromCV(cvText: string): Promise<ParsedCV> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
+  // API key validation based on provider
+  if (LLM_PROVIDER === "gemini") {
+    const geminiKey = Deno.env.get("GEMINI_API_KEY");
+    if (!geminiKey) throw new Error("GEMINI_API_KEY not configured");
+  } else {
+    const openaiKey = Deno.env.get("OPENAI_API_KEY");
+    if (!openaiKey) throw new Error("OPENAI_API_KEY not configured");
+  }
 
   const systemPrompt = `You are an expert CV parser for an academic research database. Extract ALL information from this academic CV into structured JSON.
 
@@ -357,28 +375,66 @@ Return ONLY valid JSON with this exact structure:
 
   for (let attempt = 1; attempt <= CONFIG.maxRetries; attempt++) {
     try {
-      console.log(`API call attempt ${attempt}/${CONFIG.maxRetries}...`);
+      console.log(`API call attempt ${attempt}/${CONFIG.maxRetries} using ${LLM_PROVIDER}...`);
       
-      const response = await fetchWithTimeout(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
+      let response: Response;
+      
+      if (LLM_PROVIDER === "gemini") {
+        // ========== GEMINI API CALL ==========
+        const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
+        if (!geminiApiKey) {
+          throw new Error("GEMINI_API_KEY environment variable is not set");
+        }
+        
+        response = await fetchWithTimeout(
+          `${CONFIG.gemini.apiEndpoint}/models/${CONFIG.gemini.model}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": geminiApiKey,
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [{ text: `${systemPrompt}\n\nExtract all information from this CV:\n\n${cvText}` }]
+                }
+              ],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.1,
+              },
+            }),
           },
-          body: JSON.stringify({
-            model: CONFIG.model,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: `Extract all information from this CV:\n\n${cvText}` },
-            ],
-            temperature: 0.1,
-            response_format: { type: "json_object" },
-          }),
-        },
-        CONFIG.apiTimeoutMs
-      );
+          CONFIG.apiTimeoutMs
+        );
+      } else {
+        // ========== OPENAI API CALL (commented out) ==========
+        /*
+        response = await fetchWithTimeout(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model: CONFIG.openai.model,
+              messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: `Extract all information from this CV:\n\n${cvText}` },
+              ],
+              temperature: 0.1,
+              response_format: { type: "json_object" },
+            }),
+          },
+          CONFIG.apiTimeoutMs
+        );
+        */
+        throw new Error("OpenAI provider is currently disabled. Set LLM_PROVIDER to 'gemini'");
+      }
 
       if (response.status === 429) {
         const waitTime = Math.pow(2, attempt) * CONFIG.retryDelayMs;
@@ -398,16 +454,36 @@ Return ONLY valid JSON with this exact structure:
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`API error ${response.status}: ${errorText.substring(0, 500)}`);
-        throw new Error(`OpenAI API error: ${response.status} - ${errorText.substring(0, 200)}`);
+        throw new Error(`${LLM_PROVIDER} API error: ${response.status} - ${errorText.substring(0, 200)}`);
       }
 
       const result = await response.json();
       
-      if (!result.choices || !result.choices[0] || !result.choices[0].message) {
-        throw new Error("Invalid API response structure - missing choices");
+      let content: string;
+      
+      if (LLM_PROVIDER === "gemini") {
+        // ========== GEMINI RESPONSE PARSING ==========
+        if (!result.candidates || !result.candidates[0] || !result.candidates[0].content) {
+          throw new Error("Invalid Gemini API response structure - missing candidates");
+        }
+        
+        const parts = result.candidates[0].content.parts;
+        if (!parts || !parts[0] || !parts[0].text) {
+          throw new Error("Invalid Gemini API response structure - missing text parts");
+        }
+        
+        content = parts[0].text;
+      } else {
+        // ========== OPENAI RESPONSE PARSING (commented out) ==========
+        /*
+        if (!result.choices || !result.choices[0] || !result.choices[0].message) {
+          throw new Error("Invalid API response structure - missing choices");
+        }
+        content = result.choices[0].message.content;
+        */
+        content = "";
       }
-
-      const content = result.choices[0].message.content;
+      
       if (!content) {
         throw new Error("Empty response content from API");
       }
