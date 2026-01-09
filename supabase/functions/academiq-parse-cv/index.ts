@@ -2,10 +2,6 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
-
 const OPENAI_MODELS: Record<string, { name: string; tier: string }> = {
   "gpt-5-mini": { name: "GPT-5 Mini", tier: "ultrafast" },
   "gpt-5": { name: "GPT-5", tier: "intelligent" },
@@ -28,10 +24,6 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
-
-// ============================================================================
-// TYPE DEFINITIONS
-// ============================================================================
 
 interface ParsedCV {
   personal: {
@@ -132,10 +124,6 @@ interface SpeedMetrics {
   elapsedMs: number;
   outputCharsPerSec: number;
 }
-
-// ============================================================================
-// STREAMING RESPONSE HELPER
-// ============================================================================
 
 class SSEWriter {
   private encoder = new TextEncoder();
@@ -270,10 +258,6 @@ class SSEWriter {
   }
 }
 
-// ============================================================================
-// NAME NORMALIZATION
-// ============================================================================
-
 function normalizeName(name: string): string {
   if (!name) return '';
   return name
@@ -290,10 +274,6 @@ function normalizeName(name: string): string {
     .join(' ')
     .replace(/\s+-\s+/g, '-');
 }
-
-// ============================================================================
-// PDF TEXT EXTRACTION
-// ============================================================================
 
 async function extractTextFromPDF(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
@@ -350,10 +330,6 @@ function removeSensitiveData(text: string): string {
   cleaned = cleaned.replace(/[\w.-]+@[\w.-]+\.\w+/g, '[EMAIL REDACTED]');
   return cleaned;
 }
-
-// ============================================================================
-// SECTION HEADER DETECTION
-// ============================================================================
 
 const HEADER_KEYWORDS: Record<string, string[]> = {
   personal: ['PERSONAL', 'BIOGRAPHICAL', 'CURRICULUM VITAE', 'CV', 'NAME'],
@@ -431,10 +407,6 @@ function detectSectionHeaders(text: string): SectionHeader[] {
 
   return headers;
 }
-
-// ============================================================================
-// TEXT CHUNKING
-// ============================================================================
 
 function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: number): ChunkInfo[] {
   const chunks: ChunkInfo[] = [];
@@ -527,10 +499,6 @@ function splitByParagraphs(text: string, maxChunkSize: number): ChunkInfo[] {
   return chunks;
 }
 
-// ============================================================================
-// LLM EXTRACTION WITH HEARTBEAT
-// ============================================================================
-
 async function extractFromChunk(
   chunkText: string,
   chunkId: number,
@@ -618,7 +586,6 @@ If a category has no entries in this chunk, return an empty array for it.`;
             ],
             temperature: 0.1,
             response_format: { type: "json_object" },
-            reasoning_effort: "None",
           }),
           signal: controller.signal,
         }
@@ -691,10 +658,6 @@ If a category has no entries in this chunk, return an empty array for it.`;
   return { parsed, metrics };
 }
 
-// ============================================================================
-// MERGE CHUNK RESULTS
-// ============================================================================
-
 function mergeResults(chunks: Partial<ParsedCV>[]): ParsedCV {
   const merged: ParsedCV = {
     personal: { firstName: '', lastName: '', birthYear: null, birthCountry: null },
@@ -755,10 +718,6 @@ function deduplicateByKey<T>(items: T[], keyFn: (item: T) => string): T[] {
   
   return result;
 }
-
-// ============================================================================
-// MAIN HANDLER
-// ============================================================================
 
 Deno.serve(async (req: Request) => {
   const startTime = Date.now();
