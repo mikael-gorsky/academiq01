@@ -14,7 +14,7 @@ const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
 const CONFIG = {
   maxRetries: 2,
   retryDelayMs: 500,
-  apiTimeoutMs: 120000,
+  apiTimeoutMs: 180000,
   chunkSize: 20000,
   heartbeatIntervalMs: 25000,
 };
@@ -584,12 +584,27 @@ If a category has no entries in this chunk, return an empty array for it.`;
                 content: `CV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}`
               }
             ],
-            reasoning_effort: "low",
             response_format: { type: "json_object" },
           }),
           signal: controller.signal,
         }
       );
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      const elapsed = Date.now() - startTime;
+
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        await sse.send('llm_error', `Chunk ${chunkId}/${totalChunks} timed out`, {
+          chunkId,
+          error: `Request timeout after ${elapsed}ms`,
+          timeoutMs: CONFIG.apiTimeoutMs,
+          elapsedMs: elapsed,
+          model,
+        });
+        throw new Error(`OpenAI API timeout after ${elapsed}ms`);
+      }
+
+      throw fetchError;
     } finally {
       clearTimeout(timeoutId);
     }
