@@ -6,23 +6,21 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 // CONFIGURATION
 // ============================================================================
 
-// Available Gemini models
-const GEMINI_MODELS: Record<string, { name: string; tier: string }> = {
-  "gemini-3-pro-preview": { name: "Gemini 3 Pro", tier: "intelligent" },
-  "gemini-3-flash-preview": { name: "Gemini 3 Flash", tier: "balanced" },
-  "gemini-2.5-flash": { name: "Gemini 2.5 Flash", tier: "fast" },
-  "gemini-2.5-flash-lite": { name: "Gemini 2.5 Flash-Lite", tier: "ultrafast" },
+const OPENAI_MODELS: Record<string, { name: string; tier: string }> = {
+  "gpt-5-mini": { name: "GPT-5 Mini", tier: "ultrafast" },
+  "gpt-5": { name: "GPT-5", tier: "intelligent" },
+  "gpt-5.2": { name: "GPT-5.2", tier: "advanced" },
 };
 
-const DEFAULT_MODEL = "gemini-3-flash-preview";
-const GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_MODEL = "gpt-5-mini";
+const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
 
 const CONFIG = {
   maxRetries: 2,
   retryDelayMs: 500,
-  apiTimeoutMs: 120000, // 120 seconds per chunk
-  chunkSize: 20000, // ~20K characters per chunk
-  heartbeatIntervalMs: 25000, // Send heartbeat every 25 seconds during LLM calls
+  apiTimeoutMs: 120000,
+  chunkSize: 20000,
+  heartbeatIntervalMs: 25000,
 };
 
 const corsHeaders = {
@@ -190,17 +188,14 @@ class SSEWriter {
 
     this.logEntries.push(event);
 
-    // Send SSE
     if (this.controller) {
       const data = JSON.stringify(event);
       this.controller.enqueue(this.encoder.encode(`data: ${data}\n\n`));
     }
 
-    // Log to console
     const detailStr = details ? ` | ${JSON.stringify(details)}` : '';
     console.log(`[${stage}] ${message}${detailStr}`);
 
-    // Update database log (don't await to avoid blocking)
     if (this.logId) {
       this.supabase
         .from('cv_processing_logs')
@@ -380,7 +375,7 @@ function isHeader(line: string, prevLine: string, nextLine: string): { isHeader:
     return { isHeader: false, type: null };
   }
 
-  if (/\(\d{4}\)/.test(trimmed)) return { isHeader: false, type: null };
+  if (/(\d{4})/.test(trimmed)) return { isHeader: false, type: null };
   if (/pp?\.\s*\d+/.test(trimmed)) return { isHeader: false, type: null };
   if (/vol\.\s*\d+/i.test(trimmed)) return { isHeader: false, type: null };
   if (trimmed.split(',').length > 3) return { isHeader: false, type: null };
@@ -574,8 +569,8 @@ Return ONLY valid JSON with this structure (include only fields found in this ch
 
 If a category has no entries in this chunk, return an empty array for it.`;
 
-  const modelInfo = GEMINI_MODELS[model] || GEMINI_MODELS[DEFAULT_MODEL];
-  
+  const modelInfo = OPENAI_MODELS[model] || OPENAI_MODELS[DEFAULT_MODEL];
+
   await sse.send('llm_call', `Sending chunk ${chunkId}/${totalChunks} to ${modelInfo.name}`, {
     chunkId,
     totalChunks,
@@ -586,10 +581,9 @@ If a category has no entries in this chunk, return an empty array for it.`;
     modelTier: modelInfo.tier,
   });
 
-  const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
-  if (!geminiApiKey) throw new Error("GEMINI_API_KEY not configured");
+  const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiApiKey) throw new Error("OPENAI_API_KEY not configured");
 
-  // Start heartbeat interval
   const heartbeatInterval = setInterval(() => {
     sse.sendHeartbeat();
   }, CONFIG.heartbeatIntervalMs);
@@ -603,22 +597,28 @@ If a category has no entries in this chunk, return an empty array for it.`;
 
     try {
       response = await fetch(
-        `${GEMINI_API_ENDPOINT}/models/${model}:generateContent`,
+        `${OPENAI_API_ENDPOINT}/chat/completions`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-goog-api-key": geminiApiKey,
+            "Authorization": `Bearer ${openaiApiKey}`,
           },
           body: JSON.stringify({
-            contents: [{
-              role: "user",
-              parts: [{ text: `${systemPrompt}\n\nCV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}` }]
-            }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.1,
-            },
+            model: model,
+            messages: [
+              {
+                role: "system",
+                content: systemPrompt
+              },
+              {
+                role: "user",
+                content: `CV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}`
+              }
+            ],
+            temperature: 0.1,
+            response_format: { type: "json_object" },
+            reasoning_effort: "None",
           }),
           signal: controller.signal,
         }
@@ -641,16 +641,16 @@ If a category has no entries in this chunk, return an empty array for it.`;
       elapsedMs: elapsed,
       model,
     });
-    throw new Error(`Gemini API error: ${response.status} - ${errorText.substring(0, 200)}`);
+    throw new Error(`OpenAI API error: ${response.status} - ${errorText.substring(0, 200)}`);
   }
 
   const result = await response.json();
-  
-  if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
-    throw new Error("Invalid Gemini response structure");
+
+  if (!result.choices?.[0]?.message?.content) {
+    throw new Error("Invalid OpenAI response structure");
   }
-  
-  const content = result.candidates[0].content.parts[0].text;
+
+  const content = result.choices[0].message.content;
   const outputChars = content.length;
 
   let parsed: Partial<ParsedCV>;
@@ -665,7 +665,6 @@ If a category has no entries in this chunk, return an empty array for it.`;
     throw new Error(`JSON parse failed for chunk ${chunkId}: ${e instanceof Error ? e.message : 'Unknown'}`);
   }
 
-  // Calculate speed metrics
   const metrics: SpeedMetrics = {
     inputChars: chunkText.length,
     outputChars,
@@ -673,7 +672,6 @@ If a category has no entries in this chunk, return an empty array for it.`;
     outputCharsPerSec: elapsed > 0 ? Math.round((outputChars / elapsed) * 1000) : 0,
   };
 
-  // Count extracted items
   const itemCounts: Record<string, number> = {};
   for (const [key, value] of Object.entries(parsed)) {
     if (Array.isArray(value)) {
@@ -776,32 +774,27 @@ Deno.serve(async (req: Request) => {
 
   const sse = new SSEWriter(supabase);
 
-  // Create streaming response
   const stream = new ReadableStream({
     async start(controller) {
       sse.setController(controller);
 
       try {
-        // Parse request
         let pdfFilename: string;
         let model: string;
         
         try {
           const body = await req.json();
           pdfFilename = body.pdfFilename;
-          
-          // Model selection with backward compatibility
-          if (body.model && GEMINI_MODELS[body.model]) {
+
+          if (body.model && OPENAI_MODELS[body.model]) {
             model = body.model;
           } else if (body.model) {
-            // Invalid model specified
-            await sse.send('warning', `Unknown model "${body.model}", using default`, { 
+            await sse.send('warning', `Unknown model "${body.model}", using default`, {
               requestedModel: body.model,
               defaultModel: DEFAULT_MODEL,
             });
             model = DEFAULT_MODEL;
           } else {
-            // No model specified - use default (backward compatible)
             model = DEFAULT_MODEL;
           }
         } catch (e) {
@@ -816,7 +809,7 @@ Deno.serve(async (req: Request) => {
           return;
         }
 
-        const modelInfo = GEMINI_MODELS[model];
+        const modelInfo = OPENAI_MODELS[model];
         await sse.send('start', 'Processing started', { 
           filename: pdfFilename, 
           model,
@@ -825,7 +818,6 @@ Deno.serve(async (req: Request) => {
         });
         await sse.initLog(pdfFilename, model);
 
-        // Download PDF
         await sse.send('pdf_download', 'Downloading PDF...', { filename: pdfFilename });
         const downloadStart = Date.now();
         
@@ -847,7 +839,6 @@ Deno.serve(async (req: Request) => {
         const fileSize = fileData.size;
         await sse.send('pdf_download', 'PDF downloaded', { bytes: fileSize, ms: downloadMs });
 
-        // Extract text
         await sse.send('text_extraction', 'Extracting text from PDF...', {});
         const extractStart = Date.now();
         
@@ -875,11 +866,9 @@ Deno.serve(async (req: Request) => {
           return;
         }
 
-        // Clean sensitive data
         cvText = removeSensitiveData(cvText);
         await sse.send('text_cleaning', 'Sensitive data removed', { chars: cvText.length });
 
-        // Detect section headers
         await sse.send('section_detection', 'Detecting section headers...', {});
         const headers = detectSectionHeaders(cvText);
         await sse.send('section_detection', `Found ${headers.length} section headers`, {
@@ -887,7 +876,6 @@ Deno.serve(async (req: Request) => {
           sections: headers.map(h => ({ text: h.text.substring(0, 50), type: h.type, position: h.position })),
         });
 
-        // Split into chunks
         await sse.send('chunking', 'Splitting CV into chunks...', { totalChars: cvText.length, targetChunkSize: CONFIG.chunkSize });
         const chunks = splitIntoChunks(cvText, headers, CONFIG.chunkSize);
         await sse.send('chunking', `Split into ${chunks.length} chunks`, {
@@ -897,7 +885,6 @@ Deno.serve(async (req: Request) => {
 
         await sse.updateProgress(0, chunks.length);
 
-        // Process each chunk
         const chunkResults: Partial<ParsedCV>[] = [];
         const allMetrics: SpeedMetrics[] = [];
         let lastSection: string | null = null;
@@ -930,19 +917,16 @@ Deno.serve(async (req: Request) => {
           }
         }
 
-        // Merge results
         await sse.send('merging', 'Merging chunk results...', { chunkCount: chunkResults.length });
         const mergedResult = mergeResults(chunkResults);
 
         const totalMs = Date.now() - startTime;
         
-        // Calculate aggregate speed metrics
         const totalInputChars = allMetrics.reduce((sum, m) => sum + m.inputChars, 0);
         const totalOutputChars = allMetrics.reduce((sum, m) => sum + m.outputChars, 0);
         const totalLlmMs = allMetrics.reduce((sum, m) => sum + m.elapsedMs, 0);
         const avgOutputCharsPerSec = totalLlmMs > 0 ? Math.round((totalOutputChars / totalLlmMs) * 1000) : 0;
 
-        // Create summary
         const resultSummary = {
           personal: `${mergedResult.personal.firstName} ${mergedResult.personal.lastName}`,
           education: mergedResult.education.length,
@@ -968,7 +952,6 @@ Deno.serve(async (req: Request) => {
         await sse.send('complete', 'Processing complete', resultSummary);
         await sse.complete(resultSummary);
 
-        // Check for duplicates
         const { data: existing } = await supabase
           .from("persons")
           .select("id, first_name, last_name, created_at")
