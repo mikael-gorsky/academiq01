@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Upload, FileText, X } from 'lucide-react';
-import { uploadPDF, parseCV, checkDuplicateCV, saveParsedCV, type ParsedCVData } from '../lib/database';
+import { uploadPDF, parseCV, saveParsedCV, type ParsedCVData } from '../lib/database';
 import { useToast } from './ui/Toast';
 
 const playSound = (frequency: number, duration: number) => {
@@ -112,8 +112,6 @@ export default function UploadZone() {
         });
 
         const parsedData = await parseCV(filename);
-
-        await checkDuplicateCV(parsedData.personal.email);
 
         await saveParsedCV(parsedData, filename);
 

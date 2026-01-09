@@ -526,6 +526,11 @@ export async function parseCV(pdfFilename: string): Promise<ParsedCVData> {
         console.error('Text Preview:', errorData.debug.textPreview);
       }
 
+      // Handle duplicate CV error specifically
+      if (response.status === 409 && errorData.error === 'DUPLICATE_CV') {
+        throw new Error(`A person with this name has already been processed. ${errorData.existingPerson?.name || ''} was already imported on ${errorData.existingPerson?.processedAt ? new Date(errorData.existingPerson.processedAt).toLocaleDateString() : 'a previous date'}.`);
+      }
+
       throw new Error(errorData.message || 'Failed to parse CV');
     }
 
@@ -558,8 +563,6 @@ export async function checkDuplicateCV(email: string | null): Promise<void> {
 }
 
 export async function saveParsedCV(parsedData: ParsedCVData, pdfFilename: string): Promise<string> {
-  await checkDuplicateCV(parsedData.personal.email);
-
   const normalizedEmail = parsedData.personal.email ? parsedData.personal.email.trim().toLowerCase() : null;
 
   const { data: person, error: personError } = await supabase
