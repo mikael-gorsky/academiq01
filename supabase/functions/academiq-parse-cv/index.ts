@@ -22,7 +22,7 @@ const CONFIG = {
   // Common settings
   maxRetries: 2,
   retryDelayMs: 500,
-  apiTimeoutMs: 50000, // 50 seconds - must fit within Supabase 60s function limit
+  apiTimeoutMs: 150000, // 150 seconds - must fit within Supabase 60s function limit
 };
 
 const corsHeaders = {
