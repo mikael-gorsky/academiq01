@@ -585,6 +585,7 @@ If a category has no entries in this chunk, return an empty array for it.`;
               }
             ],
             temperature: 0.1,
+            reasoning_effort: "low",
             response_format: { type: "json_object" },
           }),
           signal: controller.signal,
