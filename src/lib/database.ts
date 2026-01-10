@@ -515,9 +515,16 @@ export async function parseCV(
   };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 420000); // 7 minutes
+  const timeoutId = setTimeout(() => controller.abort(), 420000);
 
   try {
+    if (onProgress) {
+      onProgress({
+        stage: 'start',
+        message: 'Starting CV parsing with high reasoning effort',
+      });
+    }
+
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers,
@@ -528,69 +535,28 @@ export async function parseCV(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || 'Failed to parse CV');
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Failed to parse CV');
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('No response body');
+    const result = await response.json();
+
+    if (result.stage === 'error') {
+      throw new Error(result.error?.message || 'CV parsing failed');
     }
 
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let finalResult: ParsedCVData | null = null;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      
-      // Process complete SSE messages
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6); // Remove "data: " prefix
-          if (jsonStr.trim()) {
-            try {
-              const event = JSON.parse(jsonStr);
-              
-              // Report progress (skip heartbeats unless handler wants them)
-              if (onProgress && event.stage !== 'complete' && event.stage !== 'heartbeat') {
-                onProgress(event);
-              }
-
-              // Handle final result
-              if (event.stage === 'complete' && event.result) {
-                finalResult = event.result;
-              }
-
-              // Handle error from stream
-              if (event.stage === 'error') {
-                throw new Error(event.error?.message || event.message || 'CV parsing failed');
-              }
-            } catch (parseError) {
-              // Skip malformed JSON lines, but rethrow actual errors
-              if (parseError instanceof SyntaxError) {
-                console.warn('Skipping malformed SSE data:', jsonStr.substring(0, 100));
-              } else {
-                throw parseError;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    if (!finalResult) {
+    if (!result.result) {
       throw new Error('No result received from CV parser');
     }
 
-    return finalResult;
+    if (onProgress) {
+      onProgress({
+        stage: 'complete',
+        message: 'CV parsing completed successfully',
+      });
+    }
+
+    return result.result;
 
   } catch (error) {
     clearTimeout(timeoutId);
