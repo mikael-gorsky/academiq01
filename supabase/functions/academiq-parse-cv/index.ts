@@ -3,12 +3,12 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 
 const OPENAI_MODELS: Record<string, { name: string; tier: string }> = {
-  "gpt-5-mini": { name: "GPT-5 Mini", tier: "ultrafast" },
+  "gpt-5-mini-2025-08-07": { name: "GPT-5 Mini", tier: "ultrafast" },
   "gpt-5": { name: "GPT-5", tier: "intelligent" },
   "gpt-5.2": { name: "GPT-5.2", tier: "advanced" },
 };
 
-const DEFAULT_MODEL = "gpt-5-mini";
+const DEFAULT_MODEL = "gpt-5-mini-2025-08-07";
 const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
 
 const CONFIG = {
@@ -575,7 +575,7 @@ ${chunkText}`;
           content: inputPrompt
         }
       ],
-      reasoning_effort: "none",
+      reasoning_effort: "minimal",
       response_format: { type: "json_object" }
     };
 
@@ -925,7 +925,7 @@ Deno.serve(async (req: Request) => {
           education: mergedResult.education.length,
           publications: mergedResult.publications.length,
           experience: mergedResult.experience.length,
-          grants: mergedResult.education.length,
+          grants: mergedResult.grants.length,
           teaching: mergedResult.teaching.length,
           supervision: mergedResult.supervision.length,
           memberships: mergedResult.memberships.length,
