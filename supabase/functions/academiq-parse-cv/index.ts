@@ -8,7 +8,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-const DEFAULT_MODEL = "gpt-5-mini";
+const DEFAULT_MODEL = "gpt-5-mini-2025-08-07";
 const CHUNK_SIZE = 20000;
 
 async function extractFullPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
@@ -230,13 +230,12 @@ If a category has no entries, return an empty array. BE THOROUGH - extract every
       { role: "system", content: systemPrompt },
       { role: "user", content: `Parse this CV chunk:\n\n${text}` },
     ],
-    reasoning_effort: "none",
-    response_format: { type: "json_object" },
+    reasoning_effort: "high",
   };
 
   console.log(`[Chunk ${chunkNumber}/${totalChunks}] Sending request to OpenAI:`, {
     model,
-    reasoning_effort: "none",
+    reasoning_effort: "high",
     textLength: text.length,
     systemPromptLength: systemPrompt.length
   });
