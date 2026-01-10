@@ -110,6 +110,8 @@ async function parseChunk(text: string, model: string, chunkNumber: number, tota
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
 
+  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Starting API call, text length: ${text.length}, model: ${model}`);
+
   const systemPrompt = `You are an expert CV parser for an academic research database.
 
 TASK: Carefully read through this CV chunk (${chunkNumber}/${totalChunks}) and extract ALL information into structured JSON.
@@ -222,31 +224,54 @@ Think through each section carefully before extracting. Return ONLY valid JSON w
 
 If a category has no entries, return an empty array. BE THOROUGH - extract everything you find.`;
 
+  const requestBody = {
+    model: model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Parse this CV chunk:\n\n${text}` },
+    ],
+    reasoning_effort: "none",
+    response_format: { type: "json_object" },
+  };
+
+  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Sending request to OpenAI:`, {
+    model,
+    reasoning_effort: "none",
+    textLength: text.length,
+    systemPromptLength: systemPrompt.length
+  });
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Parse this CV chunk:\n\n${text}` },
-      ],
-      reasoning_effort: "none",
-      response_format: { type: "json_object" },
-    }),
+    body: JSON.stringify(requestBody),
   });
+
+  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Got response with status: ${response.status}`);
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+    console.error(`[Chunk ${chunkNumber}/${totalChunks}] OpenAI API error:`, errorText);
+    throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
   }
 
   const result = await response.json();
+  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Parsed response from OpenAI successfully`);
+
   const content = result.choices[0].message.content;
-  return JSON.parse(content);
+  const parsed = JSON.parse(content);
+
+  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Extracted data:`, {
+    hasPersonal: !!parsed.personal,
+    educationCount: parsed.education?.length || 0,
+    publicationsCount: parsed.publications?.length || 0,
+    experienceCount: parsed.experience?.length || 0
+  });
+
+  return parsed;
 }
 
 function mergeChunkResults(chunkResults: any[]): any {
