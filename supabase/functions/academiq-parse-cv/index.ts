@@ -4,11 +4,12 @@ import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
 const DEFAULT_MODEL = "gpt-5-mini-2025-08-07";
+const CHUNK_SIZE = 20000;
 
 async function extractFullPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
@@ -60,11 +61,56 @@ async function extractFullPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
   return allText.join('\n');
 }
 
-async function parseCV(text: string, model: string) {
+function splitIntoChunks(text: string): string[] {
+  if (text.length <= CHUNK_SIZE) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let currentPosition = 0;
+
+  while (currentPosition < text.length) {
+    let chunkEnd = Math.min(currentPosition + CHUNK_SIZE, text.length);
+
+    if (chunkEnd < text.length) {
+      const nextNewline = text.indexOf('\n', chunkEnd);
+      if (nextNewline !== -1 && nextNewline < chunkEnd + 500) {
+        chunkEnd = nextNewline + 1;
+      } else {
+        const lastNewline = text.lastIndexOf('\n', chunkEnd);
+        if (lastNewline > currentPosition) {
+          chunkEnd = lastNewline + 1;
+        }
+      }
+    }
+
+    const chunk = text.substring(currentPosition, chunkEnd);
+
+    if (chunks.length > 0) {
+      const previousChunk = chunks[chunks.length - 1];
+      const lines = previousChunk.split('\n');
+      const lastLines = lines.slice(-3).join('\n');
+
+      if (lastLines.length > 0 && !lastLines.endsWith('\n')) {
+        chunks[chunks.length] = lastLines + '\n' + chunk;
+      } else {
+        chunks.push(chunk);
+      }
+    } else {
+      chunks.push(chunk);
+    }
+
+    currentPosition = chunkEnd;
+  }
+
+  return chunks;
+}
+
+async function parseChunk(text: string, model: string, chunkNumber: number, totalChunks: number) {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
 
-  const systemPrompt = `You are an expert CV parser for an academic research database. Extract ALL information from this CV into structured JSON.
+  const systemPrompt = `You are an expert CV parser for an academic research database. Extract ALL information from this CV chunk (${chunkNumber}/${totalChunks}) into structured JSON.
 
 CRITICAL INSTRUCTIONS:
 1. Extract the person's FULL NAME from the top of the CV. Ignore titles like "Ph.D.", "Dr.", "Prof.".
@@ -184,7 +230,7 @@ If a category has no entries, return an empty array. BE THOROUGH - extract every
       model: model,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Parse this CV:\n\n${text}` },
+        { role: "user", content: `Parse this CV chunk:\n\n${text}` },
       ],
       reasoning_effort: "high",
       response_format: { type: "json_object" },
@@ -201,15 +247,58 @@ If a category has no entries, return an empty array. BE THOROUGH - extract every
   return JSON.parse(content);
 }
 
+function mergeChunkResults(chunkResults: any[]): any {
+  const merged = {
+    personal: {},
+    education: [],
+    publications: [],
+    experience: [],
+    grants: [],
+    teaching: [],
+    supervision: [],
+    memberships: [],
+    awards: []
+  };
+
+  for (const chunk of chunkResults) {
+    if (chunk.personal && chunk.personal.firstName) {
+      merged.personal = chunk.personal;
+    }
+
+    if (chunk.education) merged.education.push(...chunk.education);
+    if (chunk.publications) merged.publications.push(...chunk.publications);
+    if (chunk.experience) merged.experience.push(...chunk.experience);
+    if (chunk.grants) merged.grants.push(...chunk.grants);
+    if (chunk.teaching) merged.teaching.push(...chunk.teaching);
+    if (chunk.supervision) merged.supervision.push(...chunk.supervision);
+    if (chunk.memberships) merged.memberships.push(...chunk.memberships);
+    if (chunk.awards) merged.awards.push(...chunk.awards);
+  }
+
+  const deduplicatePublications = (pubs: any[]) => {
+    const seen = new Set();
+    return pubs.filter(pub => {
+      const key = `${pub.title}-${pub.publicationYear}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  merged.publications = deduplicatePublications(merged.publications);
+
+  return merged;
+}
+
 Deno.serve(async (req: Request) => {
   try {
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 200, headers: corsHeaders });
     }
 
-    const body = await req.json();
-    const pdfFilename = body.pdfFilename;
-    const model = body.model || DEFAULT_MODEL;
+    const url = new URL(req.url);
+    const pdfFilename = url.searchParams.get("pdfFilename");
+    const model = url.searchParams.get("model") || DEFAULT_MODEL;
 
     if (!pdfFilename) {
       return new Response(
@@ -218,40 +307,128 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const sendEvent = (event: string, data: any) => {
+          const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+          controller.enqueue(encoder.encode(message));
+        };
 
-    console.log("Downloading PDF:", pdfFilename);
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from('academiq-cvs')
-      .download(pdfFilename);
+        const sendKeepAlive = () => {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        };
 
-    if (downloadError || !fileData) {
-      throw new Error(`Failed to download PDF: ${downloadError?.message}`);
-    }
+        let keepAliveInterval: number | undefined;
 
-    console.log("Extracting PDF text...");
-    const arrayBuffer = await fileData.arrayBuffer();
-    const fullText = await extractFullPDFText(arrayBuffer);
+        try {
+          keepAliveInterval = setInterval(sendKeepAlive, 15000);
 
-    console.log(`Extracted ${fullText.length} characters from PDF`);
+          sendEvent('message', {
+            stage: 'extraction_start',
+            message: 'Starting PDF text extraction',
+            timestamp: Date.now()
+          });
 
-    console.log("Parsing CV with", model);
-    const parsedData = await parseCV(fullText, model);
+          const supabase = createClient(
+            Deno.env.get("SUPABASE_URL")!,
+            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+          );
 
-    console.log("Parsing complete:", parsedData.personal);
+          const { data: fileData, error: downloadError } = await supabase.storage
+            .from('academiq-cvs')
+            .download(pdfFilename);
 
-    return new Response(
-      JSON.stringify({
-        stage: "complete",
-        result: parsedData
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
+          if (downloadError || !fileData) {
+            throw new Error(`Failed to download PDF: ${downloadError?.message}`);
+          }
+
+          const arrayBuffer = await fileData.arrayBuffer();
+          const fullText = await extractFullPDFText(arrayBuffer);
+
+          sendEvent('message', {
+            stage: 'extraction_complete',
+            message: `Extracted ${fullText.length} characters`,
+            timestamp: Date.now(),
+            details: { textLength: fullText.length }
+          });
+
+          const chunks = splitIntoChunks(fullText);
+          const totalChunks = chunks.length;
+
+          sendEvent('message', {
+            stage: 'chunking_complete',
+            message: `Split into ${totalChunks} chunks`,
+            timestamp: Date.now(),
+            details: { totalChunks }
+          });
+
+          const chunkResults = [];
+
+          for (let i = 0; i < chunks.length; i++) {
+            const chunkNumber = i + 1;
+
+            sendEvent('message', {
+              stage: 'chunk_start',
+              message: `Processing chunk ${chunkNumber}/${totalChunks}`,
+              timestamp: Date.now(),
+              details: {
+                chunkNumber,
+                totalChunks,
+                chunkSize: chunks[i].length,
+                progress: Math.round((i / totalChunks) * 100)
+              }
+            });
+
+            const chunkResult = await parseChunk(chunks[i], model, chunkNumber, totalChunks);
+            chunkResults.push(chunkResult);
+
+            sendEvent('message', {
+              stage: 'chunk_complete',
+              message: `Completed chunk ${chunkNumber}/${totalChunks}`,
+              timestamp: Date.now(),
+              details: {
+                chunkNumber,
+                totalChunks,
+                progress: Math.round(((i + 1) / totalChunks) * 100)
+              }
+            });
+          }
+
+          const mergedResult = mergeChunkResults(chunkResults);
+
+          sendEvent('message', {
+            stage: 'complete',
+            message: 'CV parsing completed',
+            timestamp: Date.now(),
+            result: mergedResult
+          });
+
+          controller.close();
+
+        } catch (error) {
+          sendEvent('message', {
+            stage: 'error',
+            message: error instanceof Error ? error.message : 'Unknown error',
+            timestamp: Date.now()
+          });
+          controller.close();
+        } finally {
+          if (keepAliveInterval !== undefined) {
+            clearInterval(keepAliveInterval);
+          }
+        }
       }
-    );
+    });
+
+    return new Response(stream, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      }
+    });
 
   } catch (error) {
     console.error("Edge function error:", error);

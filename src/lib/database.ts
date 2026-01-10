@@ -508,65 +508,51 @@ export async function parseCV(
   pdfFilename: string,
   onProgress?: (event: ParseProgressEvent) => void
 ): Promise<ParsedCVData> {
-  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq-parse-cv`;
-  const headers = {
-    'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-    'Content-Type': 'application/json',
-  };
+  return new Promise((resolve, reject) => {
+    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq-parse-cv?pdfFilename=${encodeURIComponent(pdfFilename)}`;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 420000);
+    const eventSource = new EventSource(apiUrl);
 
-  try {
-    if (onProgress) {
-      onProgress({
-        stage: 'start',
-        message: 'Starting CV parsing with high reasoning effort',
-      });
-    }
+    const timeoutId = setTimeout(() => {
+      eventSource.close();
+      reject(new Error('CV parsing timed out after 7 minutes. Please try again or contact support.'));
+    }, 420000);
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ pdfFilename }),
-      signal: controller.signal,
-    });
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
 
-    clearTimeout(timeoutId);
+        if (onProgress) {
+          onProgress({
+            stage: data.stage,
+            message: data.message,
+            timestamp: data.timestamp,
+            details: data.details,
+          });
+        }
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error?.message || 'Failed to parse CV');
-    }
+        if (data.stage === 'complete') {
+          clearTimeout(timeoutId);
+          eventSource.close();
+          resolve(data.result);
+        } else if (data.stage === 'error') {
+          clearTimeout(timeoutId);
+          eventSource.close();
+          reject(new Error(data.message || 'CV parsing failed'));
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        eventSource.close();
+        reject(new Error('Failed to parse server response'));
+      }
+    };
 
-    const result = await response.json();
-
-    if (result.stage === 'error') {
-      throw new Error(result.error?.message || 'CV parsing failed');
-    }
-
-    if (!result.result) {
-      throw new Error('No result received from CV parser');
-    }
-
-    if (onProgress) {
-      onProgress({
-        stage: 'complete',
-        message: 'CV parsing completed successfully',
-      });
-    }
-
-    return result.result;
-
-  } catch (error) {
-    clearTimeout(timeoutId);
-
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('CV parsing timed out. Please try again or contact support.');
-    }
-
-    throw error;
-  }
+    eventSource.onerror = (error) => {
+      clearTimeout(timeoutId);
+      eventSource.close();
+      reject(new Error('Connection to parsing service failed'));
+    };
+  });
 }
 
 export async function checkDuplicateCV(pdfFilename: string): Promise<void> {
