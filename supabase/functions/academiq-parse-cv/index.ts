@@ -299,6 +299,14 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const pdfFilename = url.searchParams.get("pdfFilename");
     const model = url.searchParams.get("model") || DEFAULT_MODEL;
+    const apikey = url.searchParams.get("apikey");
+
+    if (!apikey) {
+      return new Response(
+        JSON.stringify({ error: "Authentication required" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     if (!pdfFilename) {
       return new Response(

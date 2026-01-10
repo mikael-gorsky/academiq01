@@ -509,7 +509,7 @@ export async function parseCV(
   onProgress?: (event: ParseProgressEvent) => void
 ): Promise<ParsedCVData> {
   return new Promise((resolve, reject) => {
-    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq-parse-cv?pdfFilename=${encodeURIComponent(pdfFilename)}`;
+    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq-parse-cv?pdfFilename=${encodeURIComponent(pdfFilename)}&apikey=${import.meta.env.VITE_SUPABASE_ANON_KEY}`;
 
     const eventSource = new EventSource(apiUrl);
 
