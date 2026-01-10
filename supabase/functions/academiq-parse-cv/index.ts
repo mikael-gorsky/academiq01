@@ -8,7 +8,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-const DEFAULT_MODEL = "gpt-5-mini-2025-08-07";
+const DEFAULT_MODEL = "gpt-5-mini";
 const CHUNK_SIZE = 20000;
 
 async function extractFullPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
@@ -110,21 +110,23 @@ async function parseChunk(text: string, model: string, chunkNumber: number, tota
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
 
-  const systemPrompt = `You are an expert CV parser for an academic research database. Extract ALL information from this CV chunk (${chunkNumber}/${totalChunks}) into structured JSON.
+  const systemPrompt = `You are an expert CV parser for an academic research database.
 
-CRITICAL INSTRUCTIONS:
-1. Extract the person's FULL NAME from the top of the CV. Ignore titles like "Ph.D.", "Dr.", "Prof.".
-2. Extract EVERY education entry with: degree type (PhD/MSc/BSc), institution, field/subject, year, country
-3. Extract EVERY publication with: title, year, type (journal/conference/book), venue, co-authors
-4. Extract EVERY work position with: institution, position title, start year, end year (null if current), country
-5. Extract ALL grants, teaching, supervision, memberships, and awards
+TASK: Carefully read through this CV chunk (${chunkNumber}/${totalChunks}) and extract ALL information into structured JSON.
+
+STEP-BY-STEP APPROACH:
+1. First, scan for the person's FULL NAME at the top of the CV (ignore titles like "Ph.D.", "Dr.", "Prof.")
+2. Then, identify ALL education entries with: degree type (PhD/MSc/BSc), institution, field/subject, year, country
+3. Next, find EVERY publication with: title, year, type (journal/conference/book), venue, co-authors
+4. Then, locate ALL work positions with: institution, position title, start year, end year (null if current), country
+5. Finally, extract ALL grants, teaching, supervision, memberships, and awards
 6. For dates: prefer specific years (e.g., "2024") or year ranges
 
 PUBLICATIONS - STRICT DEFINITION:
 INCLUDE: Journal articles, conference papers, books, book chapters, technical reports, preprints, proceedings
 EXCLUDE: Patents, press coverage, blog posts, informal presentations
 
-Return ONLY valid JSON with this exact structure:
+Think through each section carefully before extracting. Return ONLY valid JSON with this exact structure:
 {
   "personal": {
     "firstName": "",
@@ -232,7 +234,7 @@ If a category has no entries, return an empty array. BE THOROUGH - extract every
         { role: "system", content: systemPrompt },
         { role: "user", content: `Parse this CV chunk:\n\n${text}` },
       ],
-      reasoning_effort: "high",
+      reasoning_effort: "none",
       response_format: { type: "json_object" },
     }),
   });
@@ -388,8 +390,18 @@ Deno.serve(async (req: Request) => {
               }
             });
 
-            const chunkResult = await parseChunk(chunks[i], model, chunkNumber, totalChunks);
-            chunkResults.push(chunkResult);
+            try {
+              const chunkResult = await parseChunk(chunks[i], model, chunkNumber, totalChunks);
+              chunkResults.push(chunkResult);
+            } catch (chunkError) {
+              sendEvent('message', {
+                stage: 'chunk_error',
+                message: `Error processing chunk ${chunkNumber}: ${chunkError instanceof Error ? chunkError.message : 'Unknown error'}`,
+                timestamp: Date.now(),
+                details: { chunkNumber, totalChunks }
+              });
+              throw chunkError;
+            }
 
             sendEvent('message', {
               stage: 'chunk_complete',
