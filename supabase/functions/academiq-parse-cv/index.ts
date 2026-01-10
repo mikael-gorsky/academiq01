@@ -1,28 +1,35 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
-import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
-
-const OPENAI_MODELS: Record<string, { name: string; tier: string }> = {
-  "gpt-5-mini-2025-08-07": { name: "GPT-5 Mini", tier: "ultrafast" },
-  "gpt-5": { name: "GPT-5", tier: "intelligent" },
-  "gpt-5.2": { name: "GPT-5.2", tier: "advanced" },
-};
-
-const DEFAULT_MODEL = "gpt-5-mini-2025-08-07";
-const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
-
-const CONFIG = {
-  maxRetries: 2,
-  retryDelayMs: 500,
-  apiTimeoutMs: 180000,
-  chunkSize: 20000,
-  heartbeatIntervalMs: 25000,
-};
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+};
+
+const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
+const DEFAULT_MODEL = "gpt-5-mini-2025-08-07";
+
+interface OpenAIModel {
+  name: string;
+  tier: "fast" | "balanced" | "powerful";
+  supportsReasoning: boolean;
+}
+
+const OPENAI_MODELS: Record<string, OpenAIModel> = {
+  "gpt-5-mini": { name: "GPT-5 Mini", tier: "fast", supportsReasoning: true },
+  "gpt-5-mini-2025-08-07": { name: "GPT-5 Mini", tier: "fast", supportsReasoning: true },
+  "gpt-5": { name: "GPT-5", tier: "balanced", supportsReasoning: true },
+  "gpt-5-2025-08-07": { name: "GPT-5", tier: "balanced", supportsReasoning: true },
+  "gpt-5.2": { name: "GPT-5.2", tier: "powerful", supportsReasoning: true },
+  "gpt-5.2-2025-08-07": { name: "GPT-5.2", tier: "powerful", supportsReasoning: true },
+};
+
+const CONFIG = {
+  maxChunkSize: 18000,
+  targetChunkSize: 15000,
+  sectionBreakThreshold: 500,
+  apiTimeoutMs: 300000,
+  heartbeatIntervalMs: 15000,
 };
 
 interface ParsedCV {
@@ -33,457 +40,206 @@ interface ParsedCV {
     birthCountry: string | null;
   };
   education: Array<{
-    degreeType: string;
     institution: string;
-    department: string | null;
-    subject: string | null;
-    specialization: string | null;
-    awardDate: string | null;
-    honors: string | null;
-    country: string | null;
+    degree: string;
+    field: string;
+    year: number;
+    country: string;
   }>;
   publications: Array<{
     title: string;
-    publicationType: string;
-    venueName: string | null;
-    publicationYear: number;
-    volume: string | null;
-    issue: string | null;
-    pages: string | null;
-    coAuthors: string[];
-    citationCount: number | null;
-    url: string | null;
+    year: number;
+    type: string;
+    venue: string;
+    authors: string;
   }>;
   experience: Array<{
     institution: string;
-    department: string | null;
-    positionTitle: string;
-    startDate: string | null;
-    endDate: string | null;
-    description: string | null;
-    employmentType: string;
+    position: string;
+    startYear: number;
+    endYear: number | null;
+    country: string;
   }>;
   grants: Array<{
     title: string;
-    fundingInstitution: string;
+    funder: string;
+    year: number;
     amount: number | null;
-    currencyCode: string;
-    awardYear: number | null;
-    duration: string | null;
-    role: string | null;
   }>;
   teaching: Array<{
-    courseTitle: string;
-    educationLevel: string | null;
-    institution: string | null;
-    teachingPeriod: string | null;
+    course: string;
+    institution: string;
+    year: number;
   }>;
   supervision: Array<{
     studentName: string;
-    degreeLevel: string | null;
-    thesisTitle: string | null;
-    completionYear: number | null;
-    role: string | null;
+    degree: string;
+    year: number;
+    role: string;
   }>;
   memberships: Array<{
     organization: string;
-    startYear: number | null;
+    startYear: number;
     endYear: number | null;
   }>;
   awards: Array<{
-    awardName: string;
-    awardingInstitution: string | null;
-    awardYear: number | null;
-    description: string | null;
+    title: string;
+    year: number;
+    organization: string;
   }>;
 }
 
-interface ChunkInfo {
+interface CVChunk {
   id: number;
   text: string;
   startSection: string | null;
   charCount: number;
 }
 
-interface SectionHeader {
-  position: number;
-  text: string;
-  type: string;
-}
-
-interface ProgressEvent {
-  stage: string;
-  message: string;
-  timestamp: number;
-  details?: Record<string, any>;
-}
-
 interface SpeedMetrics {
+  llmMs: number;
   inputChars: number;
   outputChars: number;
-  elapsedMs: number;
-  outputCharsPerSec: number;
 }
 
 class SSEWriter {
   private encoder = new TextEncoder();
-  private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
-  private logEntries: ProgressEvent[] = [];
-  private supabase: any;
-  private logId: string | null = null;
+  private writer: WritableStreamDefaultWriter<Uint8Array>;
 
-  constructor(supabase: any) {
-    this.supabase = supabase;
+  constructor(writer: WritableStreamDefaultWriter<Uint8Array>) {
+    this.writer = writer;
   }
 
-  setController(controller: ReadableStreamDefaultController<Uint8Array>) {
-    this.controller = controller;
+  async send(event: string, message: string, data?: any) {
+    const payload = data ? { message, data } : { message };
+    const sseData = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+    await this.writer.write(this.encoder.encode(sseData));
   }
 
-  async initLog(filename: string, model: string): Promise<string> {
-    const { data, error } = await this.supabase
-      .from('cv_processing_logs')
-      .insert({
-        cv_filename: filename,
-        started_at: new Date().toISOString(),
-        status: 'processing',
-        total_chunks: 0,
-        processed_chunks: 0,
-        log_entries: [],
-        error: null,
-        result_summary: null,
-        model: model,
-      })
-      .select('id')
-      .single();
-
-    if (error) {
-      console.error('Failed to create log entry:', error);
-      this.logId = null;
-    } else {
-      this.logId = data.id;
-    }
-    return this.logId || '';
+  async sendHeartbeat() {
+    await this.writer.write(this.encoder.encode(":heartbeat\n\n"));
   }
 
-  async send(stage: string, message: string, details?: Record<string, any>) {
-    const event: ProgressEvent = {
-      stage,
-      message,
-      timestamp: Date.now(),
-      details,
-    };
-
-    this.logEntries.push(event);
-
-    if (this.controller) {
-      const data = JSON.stringify(event);
-      this.controller.enqueue(this.encoder.encode(`data: ${data}\n\n`));
-    }
-
-    const detailStr = details ? ` | ${JSON.stringify(details)}` : '';
-    console.log(`[${stage}] ${message}${detailStr}`);
-
-    if (this.logId) {
-      this.supabase
-        .from('cv_processing_logs')
-        .update({ log_entries: this.logEntries })
-        .eq('id', this.logId)
-        .then(() => {})
-        .catch((e: any) => console.error('Log update failed:', e));
-    }
-  }
-
-  sendHeartbeat() {
-    if (this.controller) {
-      const event = JSON.stringify({ stage: 'heartbeat', timestamp: Date.now() });
-      this.controller.enqueue(this.encoder.encode(`data: ${event}\n\n`));
-    }
-  }
-
-  async updateProgress(processedChunks: number, totalChunks: number) {
-    if (this.logId) {
-      await this.supabase
-        .from('cv_processing_logs')
-        .update({ 
-          processed_chunks: processedChunks,
-          total_chunks: totalChunks,
-        })
-        .eq('id', this.logId);
-    }
-  }
-
-  async complete(resultSummary: Record<string, any>) {
-    if (this.logId) {
-      await this.supabase
-        .from('cv_processing_logs')
-        .update({
-          status: 'completed',
-          completed_at: new Date().toISOString(),
-          result_summary: resultSummary,
-          log_entries: this.logEntries,
-        })
-        .eq('id', this.logId);
-    }
-  }
-
-  async fail(error: Record<string, any>) {
-    if (this.logId) {
-      await this.supabase
-        .from('cv_processing_logs')
-        .update({
-          status: 'failed',
-          completed_at: new Date().toISOString(),
-          error: error,
-          log_entries: this.logEntries,
-        })
-        .eq('id', this.logId);
-    }
-  }
-
-  sendFinal(data: any) {
-    if (this.controller) {
-      const event = JSON.stringify({ stage: 'complete', result: data });
-      this.controller.enqueue(this.encoder.encode(`data: ${event}\n\n`));
-      this.controller.close();
-    }
-  }
-
-  sendError(error: any) {
-    if (this.controller) {
-      const event = JSON.stringify({ stage: 'error', error });
-      this.controller.enqueue(this.encoder.encode(`data: ${event}\n\n`));
-      this.controller.close();
-    }
+  async close() {
+    await this.writer.close();
   }
 }
 
-function normalizeName(name: string): string {
-  if (!name) return '';
-  return name
-    .trim()
-    .toLowerCase()
-    .split(/[\s-]+/)
-    .map(part => {
-      if (part.length === 0) return '';
-      if (['de', 'von', 'van', 'der', 'den', 'la', 'le', 'du'].includes(part)) {
-        return part;
-      }
-      return part.charAt(0).toUpperCase() + part.slice(1);
-    })
-    .join(' ')
-    .replace(/\s+-\s+/g, '-');
+function sanitizeFilename(filename: string): string {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, "_").substring(0, 200);
 }
 
-async function extractTextFromPDF(arrayBuffer: ArrayBuffer): Promise<string> {
-  const uint8Array = new Uint8Array(arrayBuffer);
-
-  const loadingTask = pdfjsLib.getDocument({
-    data: uint8Array,
-    useSystemFonts: true,
-    disableFontFace: true,
-    standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/standard_fonts/",
-  });
-
-  const pdf = await loadingTask.promise;
-  const allLines: string[] = [];
-
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-    const page = await pdf.getPage(pageNum);
-    const textContent = await page.getTextContent();
-    const viewport = page.getViewport({ scale: 1.0 });
-
-    const items = textContent.items
-      .filter((item: any) => 'str' in item && item.str.trim().length > 0)
-      .map((item: any) => ({
-        text: item.str,
-        x: item.transform[4],
-        y: Math.round(viewport.height - item.transform[5]),
-      }));
-
-    const lineMap = new Map<number, any[]>();
-    for (const item of items) {
-      const yKey = Math.round(item.y / 8) * 8;
-      if (!lineMap.has(yKey)) lineMap.set(yKey, []);
-      lineMap.get(yKey)!.push(item);
-    }
-
-    const sortedYs = Array.from(lineMap.keys()).sort((a, b) => a - b);
-    for (const y of sortedYs) {
-      const lineItems = lineMap.get(y)!.sort((a, b) => a.x - b.x);
-      const lineText = lineItems.map(item => item.text).join(' ').trim();
-      if (lineText.length > 0) {
-        allLines.push(lineText);
-      }
-    }
-  }
-
-  return allLines.join('\n');
+function normalizeText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\t/g, " ")
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/ +/g, " ")
+    .trim();
 }
 
-function removeSensitiveData(text: string): string {
-  let cleaned = text;
-  cleaned = cleaned.replace(/\bID\s*#?\s*\d{9}\b/gi, '[ID REDACTED]');
-  cleaned = cleaned.replace(/\b\d{9}\b/g, '[ID REDACTED]');
-  cleaned = cleaned.replace(/\b\d{2,3}[-.\s]\d{3,6}[-.\s]\d{3,4}\b/g, '[ID REDACTED]');
-  cleaned = cleaned.replace(/Home\s*Address[:\s]+[^\n]+/gi, '[ADDRESS REDACTED]');
-  cleaned = cleaned.replace(/[\w.-]+@[\w.-]+\.\w+/g, '[EMAIL REDACTED]');
-  return cleaned;
-}
+function detectSectionHeaders(text: string): string[] {
+  const headerPatterns = [
+    /^(EDUCATION|ACADEMIC QUALIFICATIONS|DEGREES)/im,
+    /^(PROFESSIONAL EXPERIENCE|EMPLOYMENT|WORK HISTORY|CAREER)/im,
+    /^(PUBLICATIONS|RESEARCH OUTPUT|SELECTED PUBLICATIONS)/im,
+    /^(RESEARCH GRANTS|FUNDING|GRANTS)/im,
+    /^(TEACHING|COURSES TAUGHT|TEACHING EXPERIENCE)/im,
+    /^(SUPERVISION|STUDENT SUPERVISION|PHD STUDENTS)/im,
+    /^(PROFESSIONAL MEMBERSHIPS|MEMBERSHIPS|AFFILIATIONS)/im,
+    /^(AWARDS|HONORS|RECOGNITION)/im,
+  ];
 
-const HEADER_KEYWORDS: Record<string, string[]> = {
-  personal: ['PERSONAL', 'BIOGRAPHICAL', 'CURRICULUM VITAE', 'CV', 'NAME'],
-  education: ['EDUCATION', 'ACADEMIC BACKGROUND', 'DEGREES', 'QUALIFICATIONS', 'FURTHER STUDIES'],
-  experience: ['EXPERIENCE', 'EMPLOYMENT', 'POSITIONS', 'APPOINTMENTS', 'ACADEMIC POSITIONS', 'PROFESSIONAL EXPERIENCE', 'CAREER'],
-  publications: ['PUBLICATIONS', 'PAPERS', 'ARTICLES', 'REFEREED', 'JOURNAL', 'BOOKS', 'CHAPTERS'],
-  grants: ['GRANTS', 'FUNDING', 'RESEARCH SUPPORT', 'SPONSORED RESEARCH'],
-  teaching: ['TEACHING', 'COURSES', 'INSTRUCTION'],
-  supervision: ['SUPERVISION', 'STUDENTS', 'ADVISEES', 'DOCTORAL', 'GRADUATE STUDENTS', 'THESIS'],
-  awards: ['AWARDS', 'HONORS', 'PRIZES', 'FELLOWSHIPS', 'RECOGNITION'],
-  memberships: ['MEMBERSHIPS', 'AFFILIATIONS', 'SOCIETIES', 'PROFESSIONAL ACTIVITIES'],
-  other: ['REFERENCES', 'PATENTS', 'MEDIA', 'TALKS', 'PRESENTATIONS', 'CONFERENCES', 'SERVICE', 'COMMITTEES'],
-};
+  const headers: string[] = [];
+  const lines = text.split("\n");
 
-function isHeader(line: string, prevLine: string, nextLine: string): { isHeader: boolean; type: string | null } {
-  const trimmed = line.trim();
-  
-  if (trimmed.length > 80 || trimmed.length < 2) {
-    return { isHeader: false, type: null };
-  }
-
-  if (/(\d{4})/.test(trimmed)) return { isHeader: false, type: null };
-  if (/pp?\.\s*\d+/.test(trimmed)) return { isHeader: false, type: null };
-  if (/vol\.\s*\d+/i.test(trimmed)) return { isHeader: false, type: null };
-  if (trimmed.split(',').length > 3) return { isHeader: false, type: null };
-
-  const hasLetterPrefix = /^[A-Z]\.\s+/i.test(trimmed);
-  const hasNumberPrefix = /^\d{1,2}\.\s+/i.test(trimmed);
-  const hasLetterNumberPrefix = /^[A-Z]\d+\.\s+/i.test(trimmed);
-  const isMostlyUppercase = (trimmed.replace(/[^a-zA-Z]/g, '').match(/[A-Z]/g)?.length || 0) > trimmed.replace(/[^a-zA-Z]/g, '').length * 0.5;
-  const prevLineEmpty = !prevLine || prevLine.trim().length === 0;
-
-  const upperLine = trimmed.toUpperCase();
-  for (const [type, keywords] of Object.entries(HEADER_KEYWORDS)) {
-    for (const keyword of keywords) {
-      if (upperLine.includes(keyword)) {
-        if (hasLetterPrefix || hasNumberPrefix || isMostlyUppercase || prevLineEmpty) {
-          return { isHeader: true, type };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.length > 3 && line.length < 60) {
+      for (const pattern of headerPatterns) {
+        if (pattern.test(line)) {
+          headers.push(line);
+          break;
         }
       }
     }
   }
 
-  if ((hasLetterPrefix || hasNumberPrefix) && isMostlyUppercase && prevLineEmpty) {
-    return { isHeader: true, type: 'unknown' };
-  }
-
-  return { isHeader: false, type: null };
-}
-
-function detectSectionHeaders(text: string): SectionHeader[] {
-  const lines = text.split('\n');
-  const headers: SectionHeader[] = [];
-  let charPosition = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const prevLine = i > 0 ? lines[i - 1] : '';
-    const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
-
-    const result = isHeader(line, prevLine, nextLine);
-    if (result.isHeader) {
-      const isSubsection = /^[A-Z]\d+\.\s+/i.test(line.trim());
-      if (!isSubsection) {
-        headers.push({
-          position: charPosition,
-          text: line.trim(),
-          type: result.type || 'unknown',
-        });
-      }
-    }
-
-    charPosition += line.length + 1;
-  }
-
   return headers;
 }
 
-function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: number): ChunkInfo[] {
-  const chunks: ChunkInfo[] = [];
-  
-  if (headers.length === 0) {
-    return splitByParagraphs(text, maxChunkSize);
+function identifySectionType(text: string): string | null {
+  const keywords = {
+    education: ["university", "degree", "bachelor", "master", "phd", "doctorate"],
+    publications: ["journal", "conference", "proceedings", "published", "isbn", "doi"],
+    experience: ["professor", "researcher", "position", "employed", "faculty"],
+    grants: ["grant", "funding", "award", "funder", "research council"],
+    teaching: ["course", "teaching", "lecture", "instructor", "students"],
+    supervision: ["supervision", "supervised", "phd student", "thesis"],
+    memberships: ["member", "committee", "board", "society", "association"],
+    awards: ["award", "prize", "honor", "recognition", "medal"],
+  };
+
+  const lowerText = text.toLowerCase();
+  const scores: Record<string, number> = {};
+
+  for (const [section, words] of Object.entries(keywords)) {
+    scores[section] = words.reduce((count, word) => {
+      const regex = new RegExp(`\\b${word}\\b`, "gi");
+      return count + (lowerText.match(regex) || []).length;
+    }, 0);
   }
 
-  let currentChunkText = '';
-  let currentStartSection: string | null = null;
-  let chunkId = 1;
-
-  for (let i = 0; i < headers.length; i++) {
-    const header = headers[i];
-    const nextHeaderPos = i < headers.length - 1 ? headers[i + 1].position : text.length;
-    const sectionText = text.substring(header.position, nextHeaderPos);
-
-    if (currentChunkText.length + sectionText.length > maxChunkSize && currentChunkText.length > 0) {
-      chunks.push({
-        id: chunkId++,
-        text: currentChunkText,
-        startSection: currentStartSection,
-        charCount: currentChunkText.length,
-      });
-
-      currentChunkText = sectionText;
-      currentStartSection = header.type;
-    } else {
-      if (currentChunkText.length === 0) {
-        currentStartSection = header.type;
-      }
-      currentChunkText += sectionText;
-    }
+  const maxScore = Math.max(...Object.values(scores));
+  if (maxScore > 2) {
+    return Object.keys(scores).find(key => scores[key] === maxScore) || null;
   }
 
-  if (currentChunkText.length > 0) {
-    chunks.push({
-      id: chunkId,
-      text: currentChunkText,
-      startSection: currentStartSection,
-      charCount: currentChunkText.length,
-    });
-  }
-
-  if (headers.length > 0 && headers[0].position > 0) {
-    const preHeaderText = text.substring(0, headers[0].position);
-    if (preHeaderText.trim().length > 100) {
-      chunks.unshift({
-        id: 0,
-        text: preHeaderText,
-        startSection: 'personal',
-        charCount: preHeaderText.length,
-      });
-      chunks.forEach((chunk, idx) => chunk.id = idx + 1);
-    }
-  }
-
-  return chunks;
+  return null;
 }
 
-function splitByParagraphs(text: string, maxChunkSize: number): ChunkInfo[] {
-  const chunks: ChunkInfo[] = [];
-  const paragraphs = text.split(/\n\s*\n/);
-  let currentChunk = '';
+function chunkCV(text: string): CVChunk[] {
+  const normalizedText = normalizeText(text);
+  const headers = detectSectionHeaders(normalizedText);
+  const chunks: CVChunk[] = [];
   let chunkId = 1;
+  let currentChunk = "";
+  let lastSectionType: string | null = null;
 
-  for (const para of paragraphs) {
-    if (currentChunk.length + para.length > maxChunkSize && currentChunk.length > 0) {
+  const lines = normalizedText.split("\n");
+  let currentPosition = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isHeader = headers.includes(line.trim());
+
+    if (isHeader && currentChunk.length > CONFIG.sectionBreakThreshold) {
+      const sectionType = identifySectionType(currentChunk);
       chunks.push({
         id: chunkId++,
-        text: currentChunk,
-        startSection: null,
+        text: currentChunk.trim(),
+        startSection: lastSectionType,
         charCount: currentChunk.length,
       });
-      currentChunk = para;
+      lastSectionType = sectionType;
+      currentChunk = line + "\n";
+      currentPosition = 0;
+    } else if (currentChunk.length + line.length > CONFIG.maxChunkSize) {
+      const sectionType = identifySectionType(currentChunk);
+      chunks.push({
+        id: chunkId++,
+        text: currentChunk.trim(),
+        startSection: lastSectionType,
+        charCount: currentChunk.length,
+      });
+      lastSectionType = sectionType;
+      currentChunk = line + "\n";
+      currentPosition = 0;
     } else {
-      currentChunk += (currentChunk ? '\n\n' : '') + para;
+      currentChunk += line + "\n";
+      currentPosition += line.length + 1;
     }
   }
 
@@ -575,7 +331,7 @@ ${chunkText}`;
           content: inputPrompt
         }
       ],
-      reasoning_effort: "minimal",
+      reasoning_effort: "high",
       response_format: { type: "json_object" }
     };
 
@@ -630,71 +386,41 @@ ${chunkText}`;
   }
 
   const result = await response.json();
-
-  if (result.error) {
-    await sse.send('llm_error', `OpenAI API error for chunk ${chunkId}`, {
-      chunkId,
-      errorType: result.error.type,
-      errorCode: result.error.code,
-      errorMessage: result.error.message,
-      model,
-    });
-    throw new Error(`OpenAI API error: ${result.error.message}`);
-  }
-
-  if (!result.choices?.[0]?.message?.content) {
-    await sse.send('llm_error', `Invalid response structure from chunk ${chunkId}`, {
-      chunkId,
-      responseKeys: Object.keys(result),
-      responsePreview: JSON.stringify(result).substring(0, 300),
-    });
-    throw new Error(`Invalid OpenAI response structure. Keys: ${Object.keys(result).join(', ')}`);
-  }
-
-  const content = result.choices[0].message.content;
+  const content = result.choices?.[0]?.message?.content || '{}';
   const outputChars = content.length;
+
+  await sse.send('llm_response', `Chunk ${chunkId}/${totalChunks} completed`, {
+    chunkId,
+    outputChars,
+    elapsedMs: elapsed,
+    model,
+  });
 
   let parsed: Partial<ParsedCV>;
   try {
     parsed = JSON.parse(content);
-  } catch (e) {
+  } catch (parseError) {
     await sse.send('parse_error', `Failed to parse JSON from chunk ${chunkId}`, {
       chunkId,
-      error: e instanceof Error ? e.message : 'Unknown',
-      contentPreview: content.substring(0, 200),
+      error: parseError instanceof Error ? parseError.message : 'Unknown error',
+      content: content.substring(0, 500),
     });
-    throw new Error(`JSON parse failed for chunk ${chunkId}: ${e instanceof Error ? e.message : 'Unknown'}`);
+    throw new Error(`JSON parse error: ${parseError instanceof Error ? parseError.message : 'Unknown'}`);
   }
 
-  const metrics: SpeedMetrics = {
-    inputChars: chunkText.length,
-    outputChars,
-    elapsedMs: elapsed,
-    outputCharsPerSec: elapsed > 0 ? Math.round((outputChars / elapsed) * 1000) : 0,
+  return {
+    parsed,
+    metrics: {
+      llmMs: elapsed,
+      inputChars: chunkText.length,
+      outputChars,
+    },
   };
-
-  const itemCounts: Record<string, number> = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    if (Array.isArray(value)) {
-      itemCounts[key] = value.length;
-    }
-  }
-
-  await sse.send('llm_response', `Chunk ${chunkId}/${totalChunks} processed`, {
-    chunkId,
-    totalChunks,
-    model,
-    modelName: modelInfo.name,
-    itemCounts,
-    speed: metrics,
-  });
-
-  return { parsed, metrics };
 }
 
-function mergeResults(chunks: Partial<ParsedCV>[]): ParsedCV {
+function mergeResults(results: Array<Partial<ParsedCV>>): ParsedCV {
   const merged: ParsedCV = {
-    personal: { firstName: '', lastName: '', birthYear: null, birthCountry: null },
+    personal: { firstName: "", lastName: "", birthYear: null, birthCountry: null },
     education: [],
     publications: [],
     experience: [],
@@ -705,293 +431,302 @@ function mergeResults(chunks: Partial<ParsedCV>[]): ParsedCV {
     awards: [],
   };
 
-  for (const chunk of chunks) {
-    if (chunk.personal) {
-      if (!merged.personal.firstName && chunk.personal.firstName) {
-        merged.personal.firstName = normalizeName(chunk.personal.firstName);
+  for (const result of results) {
+    if (result.personal) {
+      if (result.personal.firstName && !merged.personal.firstName) {
+        merged.personal.firstName = result.personal.firstName;
       }
-      if (!merged.personal.lastName && chunk.personal.lastName) {
-        merged.personal.lastName = normalizeName(chunk.personal.lastName);
+      if (result.personal.lastName && !merged.personal.lastName) {
+        merged.personal.lastName = result.personal.lastName;
       }
-      if (!merged.personal.birthYear && chunk.personal.birthYear) {
-        merged.personal.birthYear = chunk.personal.birthYear;
+      if (result.personal.birthYear && !merged.personal.birthYear) {
+        merged.personal.birthYear = result.personal.birthYear;
       }
-      if (!merged.personal.birthCountry && chunk.personal.birthCountry) {
-        merged.personal.birthCountry = chunk.personal.birthCountry;
+      if (result.personal.birthCountry && !merged.personal.birthCountry) {
+        merged.personal.birthCountry = result.personal.birthCountry;
       }
     }
 
-    if (chunk.education) merged.education.push(...chunk.education);
-    if (chunk.publications) merged.publications.push(...chunk.publications);
-    if (chunk.experience) merged.experience.push(...chunk.experience);
-    if (chunk.grants) merged.grants.push(...chunk.grants);
-    if (chunk.teaching) merged.teaching.push(...chunk.teaching);
-    if (chunk.supervision) merged.supervision.push(...chunk.supervision);
-    if (chunk.memberships) merged.memberships.push(...chunk.memberships);
-    if (chunk.awards) merged.awards.push(...chunk.awards);
+    if (result.education) merged.education.push(...result.education);
+    if (result.publications) merged.publications.push(...result.publications);
+    if (result.experience) merged.experience.push(...result.experience);
+    if (result.grants) merged.grants.push(...result.grants);
+    if (result.teaching) merged.teaching.push(...result.teaching);
+    if (result.supervision) merged.supervision.push(...result.supervision);
+    if (result.memberships) merged.memberships.push(...result.memberships);
+    if (result.awards) merged.awards.push(...result.awards);
   }
-
-  merged.publications = deduplicateByKey(merged.publications, p => `${p.title?.toLowerCase()}|${p.publicationYear}`);
-  merged.education = deduplicateByKey(merged.education, e => `${e.institution?.toLowerCase()}|${e.degreeType?.toLowerCase()}`);
-  merged.experience = deduplicateByKey(merged.experience, e => `${e.institution?.toLowerCase()}|${e.positionTitle?.toLowerCase()}|${e.startDate}`);
 
   return merged;
 }
 
-function deduplicateByKey<T>(items: T[], keyFn: (item: T) => string): T[] {
-  const seen = new Set<string>();
-  const result: T[] = [];
-  
-  for (const item of items) {
-    const key = keyFn(item);
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(item);
-    }
+interface ProcessingSummary {
+  chunks: number;
+  modelName: string;
+  model: string;
+  speed: {
+    totalLlmMs: number;
+    totalInputChars: number;
+    totalOutputChars: number;
+    avgOutputCharsPerSec: number;
+  };
+  totalMs: number;
+  personal: string;
+  education: number;
+  publications: number;
+  experience: number;
+  grants: number;
+  teaching: number;
+  supervision: number;
+  memberships: number;
+  awards: number;
+}
+
+async function createSupabaseClient() {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Supabase credentials not configured");
   }
-  
-  return result;
+
+  const { createClient } = await import("npm:@supabase/supabase-js@2.57.4");
+  return createClient(supabaseUrl, supabaseKey);
 }
 
 Deno.serve(async (req: Request) => {
-  const startTime = Date.now();
-
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return new Response(null, {
+      status: 200,
+      headers: corsHeaders,
+    });
   }
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
+  try {
+    const url = new URL(req.url);
+    const cvId = url.searchParams.get("cvId");
+    const model = url.searchParams.get("model") || DEFAULT_MODEL;
 
-  const sse = new SSEWriter(supabase);
+    if (!cvId) {
+      return new Response(
+        JSON.stringify({ error: "cvId parameter required" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      sse.setController(controller);
+    if (!OPENAI_MODELS[model]) {
+      return new Response(
+        JSON.stringify({ error: `Invalid model. Supported: ${Object.keys(OPENAI_MODELS).join(", ")}` }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
 
-      try {
-        let pdfFilename: string;
-        let model: string;
-        
+    const supabase = await createSupabaseClient();
+
+    const { data: cvData, error: cvError } = await supabase
+      .from("cvs")
+      .select("id, filename, text_content, processed")
+      .eq("id", cvId)
+      .maybeSingle();
+
+    if (cvError || !cvData) {
+      return new Response(
+        JSON.stringify({ error: "CV not found" }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    if (!cvData.text_content) {
+      return new Response(
+        JSON.stringify({ error: "CV has no text content" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const chunks = chunkCV(cvData.text_content);
+    const totalChunks = chunks.length;
+
+    const { data: logData, error: logError } = await supabase
+      .from("cv_processing_logs")
+      .insert({
+        cv_id: cvId,
+        cv_filename: sanitizeFilename(cvData.filename),
+        model,
+        status: "processing",
+        total_chunks: totalChunks,
+        processed_chunks: 0,
+      })
+      .select("id")
+      .single();
+
+    if (logError || !logData) {
+      throw new Error(`Failed to create processing log: ${logError?.message}`);
+    }
+
+    const logId = logData.id;
+    const modelInfo = OPENAI_MODELS[model];
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const sse = new SSEWriter(controller.getWriter());
+        const overallStartTime = Date.now();
+
         try {
-          const body = await req.json();
-          pdfFilename = body.pdfFilename;
+          await sse.send('start', 'Starting CV processing', {
+            cvId,
+            filename: cvData.filename,
+            totalChunks,
+            model,
+            modelName: modelInfo.name,
+            modelTier: modelInfo.tier,
+          });
 
-          if (body.model && OPENAI_MODELS[body.model]) {
-            model = body.model;
-          } else if (body.model) {
-            await sse.send('warning', `Unknown model "${body.model}", using default`, {
-              requestedModel: body.model,
-              defaultModel: DEFAULT_MODEL,
+          const results: Array<Partial<ParsedCV>> = [];
+          const speedMetrics: SpeedMetrics[] = [];
+          let continuingSection: string | null = null;
+
+          for (const chunk of chunks) {
+            await sse.send('chunk_start', `Processing chunk ${chunk.id}/${totalChunks}`, {
+              chunkId: chunk.id,
+              totalChunks,
+              charCount: chunk.charCount,
             });
-            model = DEFAULT_MODEL;
-          } else {
-            model = DEFAULT_MODEL;
-          }
-        } catch (e) {
-          await sse.send('error', 'Invalid JSON in request body', { stage: 'request_parsing' });
-          sse.sendError({ error: 'INVALID_REQUEST', message: 'Invalid JSON in request body' });
-          return;
-        }
 
-        if (!pdfFilename) {
-          await sse.send('error', 'PDF filename is required', { stage: 'validation' });
-          sse.sendError({ error: 'MISSING_FILENAME', message: 'PDF filename is required' });
-          return;
-        }
-
-        const modelInfo = OPENAI_MODELS[model];
-        await sse.send('start', 'Processing started', { 
-          filename: pdfFilename, 
-          model,
-          modelName: modelInfo.name,
-          modelTier: modelInfo.tier,
-        });
-        await sse.initLog(pdfFilename, model);
-
-        await sse.send('pdf_download', 'Downloading PDF...', { filename: pdfFilename });
-        const downloadStart = Date.now();
-        
-        const { data: fileData, error: downloadError } = await supabase.storage
-          .from('academiq-cvs')
-          .download(pdfFilename);
-
-        if (downloadError || !fileData) {
-          await sse.send('error', 'PDF download failed', { 
-            stage: 'pdf_download',
-            error: downloadError?.message || 'File not found',
-          });
-          await sse.fail({ stage: 'pdf_download', error: downloadError?.message });
-          sse.sendError({ error: 'PDF_DOWNLOAD_FAILED', message: downloadError?.message || 'File not found' });
-          return;
-        }
-
-        const downloadMs = Date.now() - downloadStart;
-        const fileSize = fileData.size;
-        await sse.send('pdf_download', 'PDF downloaded', { bytes: fileSize, ms: downloadMs });
-
-        await sse.send('text_extraction', 'Extracting text from PDF...', {});
-        const extractStart = Date.now();
-        
-        let cvText: string;
-        try {
-          const arrayBuffer = await fileData.arrayBuffer();
-          cvText = await extractTextFromPDF(arrayBuffer);
-        } catch (error) {
-          await sse.send('error', 'PDF text extraction failed', {
-            stage: 'text_extraction',
-            error: error instanceof Error ? error.message : 'Unknown',
-          });
-          await sse.fail({ stage: 'text_extraction', error: error instanceof Error ? error.message : 'Unknown' });
-          sse.sendError({ error: 'PDF_PARSE_FAILED', message: error instanceof Error ? error.message : 'Unknown' });
-          return;
-        }
-
-        const extractMs = Date.now() - extractStart;
-        await sse.send('text_extraction', 'Text extracted', { chars: cvText.length, ms: extractMs });
-
-        if (cvText.trim().length < 100) {
-          await sse.send('error', 'PDF contains no readable text', { stage: 'text_validation', chars: cvText.trim().length });
-          await sse.fail({ stage: 'text_validation', error: 'No readable text' });
-          sse.sendError({ error: 'NO_TEXT', message: 'PDF contains no readable text or is too short' });
-          return;
-        }
-
-        cvText = removeSensitiveData(cvText);
-        await sse.send('text_cleaning', 'Sensitive data removed', { chars: cvText.length });
-
-        await sse.send('section_detection', 'Detecting section headers...', {});
-        const headers = detectSectionHeaders(cvText);
-        await sse.send('section_detection', `Found ${headers.length} section headers`, {
-          count: headers.length,
-          sections: headers.map(h => ({ text: h.text.substring(0, 50), type: h.type, position: h.position })),
-        });
-
-        await sse.send('chunking', 'Splitting CV into chunks...', { totalChars: cvText.length, targetChunkSize: CONFIG.chunkSize });
-        const chunks = splitIntoChunks(cvText, headers, CONFIG.chunkSize);
-        await sse.send('chunking', `Split into ${chunks.length} chunks`, {
-          totalChunks: chunks.length,
-          chunks: chunks.map(c => ({ id: c.id, chars: c.charCount, startSection: c.startSection })),
-        });
-
-        await sse.updateProgress(0, chunks.length);
-
-        const chunkResults: Partial<ParsedCV>[] = [];
-        const allMetrics: SpeedMetrics[] = [];
-        let lastSection: string | null = null;
-
-        for (const chunk of chunks) {
-          try {
-            const continuingSection = chunk.startSection || lastSection;
             const { parsed, metrics } = await extractFromChunk(
               chunk.text,
               chunk.id,
-              chunks.length,
+              totalChunks,
               continuingSection,
               model,
               sse
             );
-            chunkResults.push(parsed);
-            allMetrics.push(metrics);
-            
-            if (chunk.startSection) {
-              lastSection = chunk.startSection;
-            }
 
-            await sse.updateProgress(chunk.id, chunks.length);
-          } catch (error) {
-            await sse.send('chunk_error', `Failed to process chunk ${chunk.id}`, {
+            results.push(parsed);
+            speedMetrics.push(metrics);
+            continuingSection = identifySectionType(chunk.text);
+
+            await supabase
+              .from("cv_processing_logs")
+              .update({ processed_chunks: chunk.id })
+              .eq("id", logId);
+
+            await sse.send('chunk_complete', `Chunk ${chunk.id}/${totalChunks} processed`, {
               chunkId: chunk.id,
-              error: error instanceof Error ? error.message : 'Unknown',
+              totalChunks,
+              llmMs: metrics.llmMs,
             });
-            chunkResults.push({});
           }
-        }
 
-        await sse.send('merging', 'Merging chunk results...', { chunkCount: chunkResults.length });
-        const mergedResult = mergeResults(chunkResults);
+          const merged = mergeResults(results);
+          const totalMs = Date.now() - overallStartTime;
 
-        const totalMs = Date.now() - startTime;
-        
-        const totalInputChars = allMetrics.reduce((sum, m) => sum + m.inputChars, 0);
-        const totalOutputChars = allMetrics.reduce((sum, m) => sum + m.outputChars, 0);
-        const totalLlmMs = allMetrics.reduce((sum, m) => sum + m.elapsedMs, 0);
-        const avgOutputCharsPerSec = totalLlmMs > 0 ? Math.round((totalOutputChars / totalLlmMs) * 1000) : 0;
+          const totalLlmMs = speedMetrics.reduce((sum, m) => sum + m.llmMs, 0);
+          const totalInputChars = speedMetrics.reduce((sum, m) => sum + m.inputChars, 0);
+          const totalOutputChars = speedMetrics.reduce((sum, m) => sum + m.outputChars, 0);
+          const avgOutputCharsPerSec = totalLlmMs > 0 ? Math.round((totalOutputChars / totalLlmMs) * 1000) : 0;
 
-        const resultSummary = {
-          personal: `${mergedResult.personal.firstName} ${mergedResult.personal.lastName}`,
-          education: mergedResult.education.length,
-          publications: mergedResult.publications.length,
-          experience: mergedResult.experience.length,
-          grants: mergedResult.grants.length,
-          teaching: mergedResult.teaching.length,
-          supervision: mergedResult.supervision.length,
-          memberships: mergedResult.memberships.length,
-          awards: mergedResult.awards.length,
-          totalMs,
-          chunks: chunks.length,
-          model,
-          modelName: modelInfo.name,
-          speed: {
-            totalInputChars,
-            totalOutputChars,
-            totalLlmMs,
-            avgOutputCharsPerSec,
-          },
-        };
+          const summary: ProcessingSummary = {
+            chunks: totalChunks,
+            modelName: modelInfo.name,
+            model,
+            speed: {
+              totalLlmMs,
+              totalInputChars,
+              totalOutputChars,
+              avgOutputCharsPerSec,
+            },
+            totalMs,
+            personal: `${merged.personal.firstName} ${merged.personal.lastName}`.trim(),
+            education: merged.education.length,
+            publications: merged.publications.length,
+            experience: merged.experience.length,
+            grants: merged.grants.length,
+            teaching: merged.teaching.length,
+            supervision: merged.supervision.length,
+            memberships: merged.memberships.length,
+            awards: merged.awards.length,
+          };
 
-        await sse.send('complete', 'Processing complete', resultSummary);
-        await sse.complete(resultSummary);
+          await supabase
+            .from("cv_processing_logs")
+            .update({
+              status: "completed",
+              result_summary: summary,
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", logId);
 
-        const { data: existing } = await supabase
-          .from("academiq_persons")
-          .select("id, first_name, last_name, created_at")
-          .eq("first_name", mergedResult.personal.firstName)
-          .eq("last_name", mergedResult.personal.lastName)
-          .maybeSingle();
+          const { error: updateError } = await supabase
+            .from("cvs")
+            .update({
+              processed: true,
+              parsed_data: merged,
+              researcher_name: summary.personal,
+            })
+            .eq("id", cvId);
 
-        if (existing) {
-          sse.sendFinal({
-            warning: 'DUPLICATE_CV',
-            message: 'A person with this name already exists',
-            existingPerson: existing,
-            result: mergedResult,
-            _metadata: resultSummary,
+          if (updateError) {
+            throw updateError;
+          }
+
+          await sse.send('complete', 'Processing complete', {
+            cvId,
+            summary,
           });
-        } else {
-          sse.sendFinal({
-            ...mergedResult,
-            _metadata: resultSummary,
-          });
-        }
 
-      } catch (error) {
-        console.error('Unexpected error:', error);
-        await sse.send('error', 'Unexpected error occurred', {
-          stage: 'unknown',
-          error: error instanceof Error ? error.message : 'Unknown',
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-        await sse.fail({
-          stage: 'unknown',
-          error: error instanceof Error ? error.message : 'Unknown',
-        });
-        sse.sendError({
-          error: 'UNEXPECTED_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-        });
+          await sse.close();
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+          await sse.send('error', errorMessage, {
+            cvId,
+            error: errorMessage,
+          });
+
+          await supabase
+            .from("cv_processing_logs")
+            .update({
+              status: "failed",
+              error: errorMessage,
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", logId);
+
+          await sse.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    });
+  } catch (error) {
+    console.error("Edge function error:", error);
+    return new Response(
+      JSON.stringify({
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    },
-  });
+    );
+  }
 });
