@@ -569,20 +569,19 @@ ${chunkText}`;
 
     const requestBody: any = {
       model: model,
-      input: inputPrompt,
-      reasoning: {
-        effort: "none"
-      },
-      text: {
-        format: {
-          type: "json_object"
+      messages: [
+        {
+          role: "user",
+          content: inputPrompt
         }
-      }
+      ],
+      reasoning_effort: "none",
+      response_format: { type: "json_object" }
     };
 
     try {
       response = await fetch(
-        `${OPENAI_API_ENDPOINT}/responses`,
+        `${OPENAI_API_ENDPOINT}/chat/completions`,
         {
           method: "POST",
           headers: {
@@ -643,7 +642,7 @@ ${chunkText}`;
     throw new Error(`OpenAI API error: ${result.error.message}`);
   }
 
-  if (!result.output_text) {
+  if (!result.choices?.[0]?.message?.content) {
     await sse.send('llm_error', `Invalid response structure from chunk ${chunkId}`, {
       chunkId,
       responseKeys: Object.keys(result),
@@ -652,7 +651,7 @@ ${chunkText}`;
     throw new Error(`Invalid OpenAI response structure. Keys: ${Object.keys(result).join(', ')}`);
   }
 
-  const content = result.output_text;
+  const content = result.choices[0].message.content;
   const outputChars = content.length;
 
   let parsed: Partial<ParsedCV>;
@@ -926,7 +925,7 @@ Deno.serve(async (req: Request) => {
           education: mergedResult.education.length,
           publications: mergedResult.publications.length,
           experience: mergedResult.experience.length,
-          grants: mergedResult.grants.length,
+          grants: mergedResult.education.length,
           teaching: mergedResult.teaching.length,
           supervision: mergedResult.supervision.length,
           memberships: mergedResult.memberships.length,
