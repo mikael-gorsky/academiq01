@@ -2,16 +2,458 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import * as pdfjsLib from "npm:pdfjs-dist@4.0.379";
 
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+// Available OpenAI models with tiering strategy
+const OPENAI_MODELS: Record<string, { name: string; tier: string }> = {
+  "gpt-5.2-2025-12-11": { name: "GPT-5.2", tier: "intelligent" },
+  "gpt-4.1-2025-04-14": { name: "GPT-4.1", tier: "fast" },
+};
+
+const DEFAULT_MODEL = "gpt-4.1-2025-04-14"; // Use fast model by default
+const ADVANCED_MODEL = "gpt-5.2-2025-12-11"; // Use for complex chunks
+const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
+
+const CONFIG = {
+  maxRetries: 2,
+  retryDelayMs: 500,
+  apiTimeoutMs: 120000, // 120 seconds per chunk
+  chunkSize: 20000, // ~20K characters per chunk
+  heartbeatIntervalMs: 25000, // Send heartbeat every 25 seconds during LLM calls
+};
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-const DEFAULT_MODEL = "gpt-5-mini-2025-08-07";
-const CHUNK_SIZE = 20000;
+// ============================================================================
+// JSON SCHEMA DEFINITIONS FOR STRUCTURED OUTPUTS
+// ============================================================================
 
-async function extractFullPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
+const CV_SCHEMA = {
+  type: "object",
+  properties: {
+    personal: {
+      type: "object",
+      properties: {
+        firstName: { type: "string" },
+        lastName: { type: "string" },
+        birthYear: { type: ["number", "null"] },
+        birthCountry: { type: ["string", "null"] },
+      },
+      required: ["firstName", "lastName", "birthYear", "birthCountry"],
+      additionalProperties: false,
+    },
+    education: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          degreeType: { type: "string" },
+          institution: { type: "string" },
+          department: { type: ["string", "null"] },
+          subject: { type: ["string", "null"] },
+          specialization: { type: ["string", "null"] },
+          awardDate: { type: ["string", "null"] },
+          honors: { type: ["string", "null"] },
+          country: { type: ["string", "null"] },
+        },
+        required: ["degreeType", "institution", "department", "subject", "specialization", "awardDate", "honors", "country"],
+        additionalProperties: false,
+      },
+    },
+    publications: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          publicationType: { type: "string" },
+          venueName: { type: ["string", "null"] },
+          publicationYear: { type: "number" },
+          volume: { type: ["string", "null"] },
+          issue: { type: ["string", "null"] },
+          pages: { type: ["string", "null"] },
+          coAuthors: {
+            type: "array",
+            items: { type: "string" },
+          },
+          citationCount: { type: ["number", "null"] },
+          url: { type: ["string", "null"] },
+        },
+        required: ["title", "publicationType", "venueName", "publicationYear", "volume", "issue", "pages", "coAuthors", "citationCount", "url"],
+        additionalProperties: false,
+      },
+    },
+    experience: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          institution: { type: "string" },
+          department: { type: ["string", "null"] },
+          positionTitle: { type: "string" },
+          startDate: { type: ["string", "null"] },
+          endDate: { type: ["string", "null"] },
+          description: { type: ["string", "null"] },
+          employmentType: { type: "string" },
+        },
+        required: ["institution", "department", "positionTitle", "startDate", "endDate", "description", "employmentType"],
+        additionalProperties: false,
+      },
+    },
+    grants: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          fundingInstitution: { type: "string" },
+          amount: { type: ["number", "null"] },
+          currencyCode: { type: "string" },
+          awardYear: { type: ["number", "null"] },
+          duration: { type: ["string", "null"] },
+          role: { type: ["string", "null"] },
+        },
+        required: ["title", "fundingInstitution", "amount", "currencyCode", "awardYear", "duration", "role"],
+        additionalProperties: false,
+      },
+    },
+    teaching: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          courseTitle: { type: "string" },
+          educationLevel: { type: ["string", "null"] },
+          institution: { type: ["string", "null"] },
+          teachingPeriod: { type: ["string", "null"] },
+        },
+        required: ["courseTitle", "educationLevel", "institution", "teachingPeriod"],
+        additionalProperties: false,
+      },
+    },
+    supervision: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          studentName: { type: "string" },
+          degreeLevel: { type: ["string", "null"] },
+          thesisTitle: { type: ["string", "null"] },
+          completionYear: { type: ["number", "null"] },
+          role: { type: ["string", "null"] },
+        },
+        required: ["studentName", "degreeLevel", "thesisTitle", "completionYear", "role"],
+        additionalProperties: false,
+      },
+    },
+    memberships: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          organization: { type: "string" },
+          startYear: { type: ["number", "null"] },
+          endYear: { type: ["number", "null"] },
+        },
+        required: ["organization", "startYear", "endYear"],
+        additionalProperties: false,
+      },
+    },
+    awards: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          awardName: { type: "string" },
+          awardingInstitution: { type: ["string", "null"] },
+          awardYear: { type: ["number", "null"] },
+          description: { type: ["string", "null"] },
+        },
+        required: ["awardName", "awardingInstitution", "awardYear", "description"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["personal", "education", "publications", "experience", "grants", "teaching", "supervision", "memberships", "awards"],
+  additionalProperties: false,
+};
+
+// ============================================================================
+// TYPE DEFINITIONS
+// ============================================================================
+
+interface ParsedCV {
+  personal: {
+    firstName: string;
+    lastName: string;
+    birthYear: number | null;
+    birthCountry: string | null;
+  };
+  education: Array<{
+    degreeType: string;
+    institution: string;
+    department: string | null;
+    subject: string | null;
+    specialization: string | null;
+    awardDate: string | null;
+    honors: string | null;
+    country: string | null;
+  }>;
+  publications: Array<{
+    title: string;
+    publicationType: string;
+    venueName: string | null;
+    publicationYear: number;
+    volume: string | null;
+    issue: string | null;
+    pages: string | null;
+    coAuthors: string[];
+    citationCount: number | null;
+    url: string | null;
+  }>;
+  experience: Array<{
+    institution: string;
+    department: string | null;
+    positionTitle: string;
+    startDate: string | null;
+    endDate: string | null;
+    description: string | null;
+    employmentType: string;
+  }>;
+  grants: Array<{
+    title: string;
+    fundingInstitution: string;
+    amount: number | null;
+    currencyCode: string;
+    awardYear: number | null;
+    duration: string | null;
+    role: string | null;
+  }>;
+  teaching: Array<{
+    courseTitle: string;
+    educationLevel: string | null;
+    institution: string | null;
+    teachingPeriod: string | null;
+  }>;
+  supervision: Array<{
+    studentName: string;
+    degreeLevel: string | null;
+    thesisTitle: string | null;
+    completionYear: number | null;
+    role: string | null;
+  }>;
+  memberships: Array<{
+    organization: string;
+    startYear: number | null;
+    endYear: number | null;
+  }>;
+  awards: Array<{
+    awardName: string;
+    awardingInstitution: string | null;
+    awardYear: number | null;
+    description: string | null;
+  }>;
+}
+
+interface ChunkInfo {
+  id: number;
+  text: string;
+  startSection: string | null;
+  charCount: number;
+}
+
+interface SectionHeader {
+  position: number;
+  text: string;
+  type: string;
+}
+
+interface ProgressEvent {
+  stage: string;
+  message: string;
+  timestamp: number;
+  details?: Record<string, any>;
+}
+
+interface SpeedMetrics {
+  inputChars: number;
+  outputChars: number;
+  elapsedMs: number;
+  outputCharsPerSec: number;
+}
+
+// ============================================================================
+// STREAMING RESPONSE HELPER
+// ============================================================================
+
+class SSEWriter {
+  private encoder = new TextEncoder();
+  private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  private logEntries: ProgressEvent[] = [];
+  private supabase: any;
+  private logId: string | null = null;
+
+  constructor(supabase: any) {
+    this.supabase = supabase;
+  }
+
+  setController(controller: ReadableStreamDefaultController<Uint8Array>) {
+    this.controller = controller;
+  }
+
+  async initLog(filename: string, model: string): Promise<string> {
+    const { data, error } = await this.supabase
+      .from('cv_processing_logs')
+      .insert({
+        cv_filename: filename,
+        started_at: new Date().toISOString(),
+        status: 'processing',
+        total_chunks: 0,
+        processed_chunks: 0,
+        log_entries: [],
+        error: null,
+        result_summary: null,
+        model: model,
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('Failed to create log entry:', error);
+      this.logId = null;
+    } else {
+      this.logId = data.id;
+    }
+    return this.logId || '';
+  }
+
+  async send(stage: string, message: string, details?: Record<string, any>) {
+    const event: ProgressEvent = {
+      stage,
+      message,
+      timestamp: Date.now(),
+      details,
+    };
+
+    this.logEntries.push(event);
+
+    // Send SSE
+    if (this.controller) {
+      const data = JSON.stringify(event);
+      this.controller.enqueue(this.encoder.encode(`data: ${data}\n\n`));
+    }
+
+    // Log to console
+    const detailStr = details ? ` | ${JSON.stringify(details)}` : '';
+    console.log(`[${stage}] ${message}${detailStr}`);
+
+    // Update database log (don't await to avoid blocking)
+    if (this.logId) {
+      this.supabase
+        .from('cv_processing_logs')
+        .update({ log_entries: this.logEntries })
+        .eq('id', this.logId)
+        .then(() => {})
+        .catch((e: any) => console.error('Log update failed:', e));
+    }
+  }
+
+  sendHeartbeat() {
+    if (this.controller) {
+      const event = JSON.stringify({ stage: 'heartbeat', timestamp: Date.now() });
+      this.controller.enqueue(this.encoder.encode(`data: ${event}\n\n`));
+    }
+  }
+
+  async updateProgress(processedChunks: number, totalChunks: number) {
+    if (this.logId) {
+      await this.supabase
+        .from('cv_processing_logs')
+        .update({ 
+          processed_chunks: processedChunks,
+          total_chunks: totalChunks,
+        })
+        .eq('id', this.logId);
+    }
+  }
+
+  async complete(resultSummary: Record<string, any>) {
+    if (this.logId) {
+      await this.supabase
+        .from('cv_processing_logs')
+        .update({
+          status: 'completed',
+          completed_at: new Date().toISOString(),
+          result_summary: resultSummary,
+          log_entries: this.logEntries,
+        })
+        .eq('id', this.logId);
+    }
+  }
+
+  async fail(error: Record<string, any>) {
+    if (this.logId) {
+      await this.supabase
+        .from('cv_processing_logs')
+        .update({
+          status: 'failed',
+          completed_at: new Date().toISOString(),
+          error: error,
+          log_entries: this.logEntries,
+        })
+        .eq('id', this.logId);
+    }
+  }
+
+  sendFinal(data: any) {
+    if (this.controller) {
+      const event = JSON.stringify({ stage: 'complete', result: data });
+      this.controller.enqueue(this.encoder.encode(`data: ${event}\n\n`));
+      this.controller.close();
+    }
+  }
+
+  sendError(error: any) {
+    if (this.controller) {
+      const event = JSON.stringify({ stage: 'error', error });
+      this.controller.enqueue(this.encoder.encode(`data: ${event}\n\n`));
+      this.controller.close();
+    }
+  }
+}
+
+// ============================================================================
+// NAME NORMALIZATION
+// ============================================================================
+
+function normalizeName(name: string): string {
+  if (!name) return '';
+  return name
+    .trim()
+    .toLowerCase()
+    .split(/[\s-]+/)
+    .map(part => {
+      if (part.length === 0) return '';
+      if (['de', 'von', 'van', 'der', 'den', 'la', 'le', 'du'].includes(part)) {
+        return part;
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(' ')
+    .replace(/\s+-\s+/g, '-');
+}
+
+// ============================================================================
+// PDF TEXT EXTRACTION
+// ============================================================================
+
+async function extractTextFromPDF(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
 
   const loadingTask = pdfjsLib.getDocument({
@@ -22,7 +464,7 @@ async function extractFullPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
   });
 
   const pdf = await loadingTask.promise;
-  const allText: string[] = [];
+  const allLines: string[] = [];
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
@@ -49,233 +491,401 @@ async function extractFullPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
       const lineItems = lineMap.get(y)!.sort((a, b) => a.x - b.x);
       const lineText = lineItems.map(item => item.text).join(' ').trim();
       if (lineText.length > 0) {
-        allText.push(lineText);
+        allLines.push(lineText);
       }
     }
-
-    if (pageNum < pdf.numPages) {
-      allText.push('\n--- PAGE BREAK ---\n');
-    }
   }
 
-  return allText.join('\n');
+  return allLines.join('\n');
 }
 
-function splitIntoChunks(text: string): string[] {
-  if (text.length <= CHUNK_SIZE) {
-    return [text];
+function removeSensitiveData(text: string): string {
+  let cleaned = text;
+  cleaned = cleaned.replace(/\bID\s*#?\s*\d{9}\b/gi, '[ID REDACTED]');
+  cleaned = cleaned.replace(/\b\d{9}\b/g, '[ID REDACTED]');
+  cleaned = cleaned.replace(/\b\d{2,3}[-.\s]\d{3,6}[-.\s]\d{3,4}\b/g, '[ID REDACTED]');
+  cleaned = cleaned.replace(/Home\s*Address[:\s]+[^\n]+/gi, '[ADDRESS REDACTED]');
+  cleaned = cleaned.replace(/[\w.-]+@[\w.-]+\.\w+/g, '[EMAIL REDACTED]');
+  return cleaned;
+}
+
+// ============================================================================
+// SECTION HEADER DETECTION
+// ============================================================================
+
+const HEADER_KEYWORDS: Record<string, string[]> = {
+  personal: ['PERSONAL', 'BIOGRAPHICAL', 'CURRICULUM VITAE', 'CV', 'NAME'],
+  education: ['EDUCATION', 'ACADEMIC BACKGROUND', 'DEGREES', 'QUALIFICATIONS', 'FURTHER STUDIES'],
+  experience: ['EXPERIENCE', 'EMPLOYMENT', 'POSITIONS', 'APPOINTMENTS', 'ACADEMIC POSITIONS', 'PROFESSIONAL EXPERIENCE', 'CAREER'],
+  publications: ['PUBLICATIONS', 'PAPERS', 'ARTICLES', 'REFEREED', 'JOURNAL', 'BOOKS', 'CHAPTERS'],
+  grants: ['GRANTS', 'FUNDING', 'RESEARCH SUPPORT', 'SPONSORED RESEARCH'],
+  teaching: ['TEACHING', 'COURSES', 'INSTRUCTION'],
+  supervision: ['SUPERVISION', 'STUDENTS', 'ADVISEES', 'DOCTORAL', 'GRADUATE STUDENTS', 'THESIS'],
+  awards: ['AWARDS', 'HONORS', 'PRIZES', 'FELLOWSHIPS', 'RECOGNITION'],
+  memberships: ['MEMBERSHIPS', 'AFFILIATIONS', 'SOCIETIES', 'PROFESSIONAL ACTIVITIES'],
+  other: ['REFERENCES', 'PATENTS', 'MEDIA', 'TALKS', 'PRESENTATIONS', 'CONFERENCES', 'SERVICE', 'COMMITTEES'],
+};
+
+function isHeader(line: string, prevLine: string, nextLine: string): { isHeader: boolean; type: string | null } {
+  const trimmed = line.trim();
+  
+  if (trimmed.length > 80 || trimmed.length < 2) {
+    return { isHeader: false, type: null };
   }
 
-  const chunks: string[] = [];
-  let currentPosition = 0;
+  if (/\(\d{4}\)/.test(trimmed)) return { isHeader: false, type: null };
+  if (/pp?\.\s*\d+/.test(trimmed)) return { isHeader: false, type: null };
+  if (/vol\.\s*\d+/i.test(trimmed)) return { isHeader: false, type: null };
+  if (trimmed.split(',').length > 3) return { isHeader: false, type: null };
 
-  while (currentPosition < text.length) {
-    let chunkEnd = Math.min(currentPosition + CHUNK_SIZE, text.length);
+  const hasLetterPrefix = /^[A-Z]\.\s+/i.test(trimmed);
+  const hasNumberPrefix = /^\d{1,2}\.\s+/i.test(trimmed);
+  const hasLetterNumberPrefix = /^[A-Z]\d+\.\s+/i.test(trimmed);
+  const isMostlyUppercase = (trimmed.replace(/[^a-zA-Z]/g, '').match(/[A-Z]/g)?.length || 0) > trimmed.replace(/[^a-zA-Z]/g, '').length * 0.5;
+  const prevLineEmpty = !prevLine || prevLine.trim().length === 0;
 
-    if (chunkEnd < text.length) {
-      const nextNewline = text.indexOf('\n', chunkEnd);
-      if (nextNewline !== -1 && nextNewline < chunkEnd + 500) {
-        chunkEnd = nextNewline + 1;
-      } else {
-        const lastNewline = text.lastIndexOf('\n', chunkEnd);
-        if (lastNewline > currentPosition) {
-          chunkEnd = lastNewline + 1;
+  const upperLine = trimmed.toUpperCase();
+  for (const [type, keywords] of Object.entries(HEADER_KEYWORDS)) {
+    for (const keyword of keywords) {
+      if (upperLine.includes(keyword)) {
+        if (hasLetterPrefix || hasNumberPrefix || isMostlyUppercase || prevLineEmpty) {
+          return { isHeader: true, type };
         }
       }
     }
+  }
 
-    const chunk = text.substring(currentPosition, chunkEnd);
+  if ((hasLetterPrefix || hasNumberPrefix) && isMostlyUppercase && prevLineEmpty) {
+    return { isHeader: true, type: 'unknown' };
+  }
 
-    if (chunks.length > 0) {
-      const previousChunk = chunks[chunks.length - 1];
-      const lines = previousChunk.split('\n');
-      const lastLines = lines.slice(-3).join('\n');
+  return { isHeader: false, type: null };
+}
 
-      if (lastLines.length > 0 && !lastLines.endsWith('\n')) {
-        chunks[chunks.length] = lastLines + '\n' + chunk;
-      } else {
-        chunks.push(chunk);
+function detectSectionHeaders(text: string): SectionHeader[] {
+  const lines = text.split('\n');
+  const headers: SectionHeader[] = [];
+  let charPosition = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prevLine = i > 0 ? lines[i - 1] : '';
+    const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
+
+    const result = isHeader(line, prevLine, nextLine);
+    if (result.isHeader) {
+      const isSubsection = /^[A-Z]\d+\.\s+/i.test(line.trim());
+      if (!isSubsection) {
+        headers.push({
+          position: charPosition,
+          text: line.trim(),
+          type: result.type || 'unknown',
+        });
       }
-    } else {
-      chunks.push(chunk);
     }
 
-    currentPosition = chunkEnd;
+    charPosition += line.length + 1;
+  }
+
+  return headers;
+}
+
+// ============================================================================
+// TEXT CHUNKING
+// ============================================================================
+
+function splitIntoChunks(text: string, headers: SectionHeader[], maxChunkSize: number): ChunkInfo[] {
+  const chunks: ChunkInfo[] = [];
+  
+  if (headers.length === 0) {
+    return splitByParagraphs(text, maxChunkSize);
+  }
+
+  let currentChunkText = '';
+  let currentStartSection: string | null = null;
+  let chunkId = 1;
+
+  for (let i = 0; i < headers.length; i++) {
+    const header = headers[i];
+    const nextHeaderPos = i < headers.length - 1 ? headers[i + 1].position : text.length;
+    const sectionText = text.substring(header.position, nextHeaderPos);
+
+    if (currentChunkText.length + sectionText.length > maxChunkSize && currentChunkText.length > 0) {
+      chunks.push({
+        id: chunkId++,
+        text: currentChunkText,
+        startSection: currentStartSection,
+        charCount: currentChunkText.length,
+      });
+
+      currentChunkText = sectionText;
+      currentStartSection = header.type;
+    } else {
+      if (currentChunkText.length === 0) {
+        currentStartSection = header.type;
+      }
+      currentChunkText += sectionText;
+    }
+  }
+
+  if (currentChunkText.length > 0) {
+    chunks.push({
+      id: chunkId,
+      text: currentChunkText,
+      startSection: currentStartSection,
+      charCount: currentChunkText.length,
+    });
+  }
+
+  if (headers.length > 0 && headers[0].position > 0) {
+    const preHeaderText = text.substring(0, headers[0].position);
+    if (preHeaderText.trim().length > 100) {
+      chunks.unshift({
+        id: 0,
+        text: preHeaderText,
+        startSection: 'personal',
+        charCount: preHeaderText.length,
+      });
+      chunks.forEach((chunk, idx) => chunk.id = idx + 1);
+    }
   }
 
   return chunks;
 }
 
-async function parseChunk(text: string, model: string, chunkNumber: number, totalChunks: number) {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
+function splitByParagraphs(text: string, maxChunkSize: number): ChunkInfo[] {
+  const chunks: ChunkInfo[] = [];
+  const paragraphs = text.split(/\n\s*\n/);
+  let currentChunk = '';
+  let chunkId = 1;
 
-  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Starting API call, text length: ${text.length}, model: ${model}`);
+  for (const para of paragraphs) {
+    if (currentChunk.length + para.length > maxChunkSize && currentChunk.length > 0) {
+      chunks.push({
+        id: chunkId++,
+        text: currentChunk,
+        startSection: null,
+        charCount: currentChunk.length,
+      });
+      currentChunk = para;
+    } else {
+      currentChunk += (currentChunk ? '\n\n' : '') + para;
+    }
+  }
 
-  const systemPrompt = `You are an expert CV parser for an academic research database.
+  if (currentChunk.length > 0) {
+    chunks.push({
+      id: chunkId,
+      text: currentChunk,
+      startSection: null,
+      charCount: currentChunk.length,
+    });
+  }
 
-TASK: Carefully read through this CV chunk (${chunkNumber}/${totalChunks}) and extract ALL information into structured JSON.
-
-STEP-BY-STEP APPROACH:
-1. First, scan for the person's FULL NAME at the top of the CV (ignore titles like "Ph.D.", "Dr.", "Prof.")
-2. Then, identify ALL education entries with: degree type (PhD/MSc/BSc), institution, field/subject, year, country
-3. Next, find EVERY publication with: title, year, type (journal/conference/book), venue, co-authors
-4. Then, locate ALL work positions with: institution, position title, start year, end year (null if current), country
-5. Finally, extract ALL grants, teaching, supervision, memberships, and awards
-6. For dates: prefer specific years (e.g., "2024") or year ranges
-
-PUBLICATIONS - STRICT DEFINITION:
-INCLUDE: Journal articles, conference papers, books, book chapters, technical reports, preprints, proceedings
-EXCLUDE: Patents, press coverage, blog posts, informal presentations
-
-Think through each section carefully before extracting. Return ONLY valid JSON with this exact structure:
-{
-  "personal": {
-    "firstName": "",
-    "lastName": "",
-    "email": "",
-    "phone": null,
-    "birthYear": null,
-    "birthCountry": null,
-    "maritalStatus": null,
-    "numChildren": null
-  },
-  "education": [
-    {
-      "degreeType": "PhD",
-      "institution": "University Name",
-      "department": null,
-      "subject": "Computer Science",
-      "specialization": null,
-      "awardDate": "2020",
-      "honors": null,
-      "country": "USA"
-    }
-  ],
-  "publications": [
-    {
-      "title": "Paper Title",
-      "publicationType": "Journal Article",
-      "venueName": "Nature",
-      "publicationYear": 2024,
-      "volume": null,
-      "issue": null,
-      "pages": null,
-      "coAuthors": ["Author1", "Author2"],
-      "citationCount": null,
-      "url": null
-    }
-  ],
-  "experience": [
-    {
-      "institution": "Company/University",
-      "department": null,
-      "positionTitle": "Professor",
-      "startDate": "2020",
-      "endDate": null,
-      "description": null,
-      "employmentType": "Full-time"
-    }
-  ],
-  "grants": [
-    {
-      "title": "Grant Title",
-      "fundingInstitution": "NSF",
-      "amount": 100000,
-      "currencyCode": "USD",
-      "awardYear": 2024,
-      "duration": "3 years",
-      "role": "Principal Investigator"
-    }
-  ],
-  "teaching": [
-    {
-      "courseTitle": "Machine Learning 101",
-      "educationLevel": "Undergraduate",
-      "institution": "University",
-      "teachingPeriod": "Fall 2024"
-    }
-  ],
-  "supervision": [
-    {
-      "studentName": "John Doe",
-      "degreeLevel": "PhD",
-      "thesisTitle": "Thesis Title",
-      "completionYear": 2024,
-      "role": "Primary Supervisor"
-    }
-  ],
-  "memberships": [
-    {
-      "organization": "IEEE",
-      "startYear": 2020,
-      "endYear": null
-    }
-  ],
-  "awards": [
-    {
-      "awardName": "Best Paper Award",
-      "awardingInstitution": "Conference Name",
-      "awardYear": 2024,
-      "description": null
-    }
-  ]
+  return chunks;
 }
 
-If a category has no entries, return an empty array. BE THOROUGH - extract everything you find.`;
+// ============================================================================
+// MODEL SELECTION LOGIC
+// ============================================================================
 
-  const requestBody = {
-    model: model,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `Parse this CV chunk:\n\n${text}` },
-    ],
-    reasoning_effort: "high",
+function selectModel(chunkInfo: ChunkInfo, totalChunks: number): string {
+  // Use advanced model for:
+  // 1. First chunk (likely has personal info and complex structure)
+  // 2. Large chunks with publications (complex parsing)
+  // 3. Chunks with multiple section types
+  
+  if (chunkInfo.id === 1) {
+    return ADVANCED_MODEL;
+  }
+  
+  if (chunkInfo.startSection === 'publications' && chunkInfo.charCount > 15000) {
+    return ADVANCED_MODEL;
+  }
+  
+  // Default to fast model for straightforward extractions
+  return DEFAULT_MODEL;
+}
+
+// ============================================================================
+// LLM EXTRACTION WITH STRUCTURED OUTPUTS
+// ============================================================================
+
+async function extractFromChunk(
+  chunkText: string,
+  chunkId: number,
+  totalChunks: number,
+  continuingSection: string | null,
+  sse: SSEWriter
+): Promise<{ parsed: Partial<ParsedCV>; metrics: SpeedMetrics; model: string }> {
+  
+  const chunkInfo: ChunkInfo = {
+    id: chunkId,
+    text: chunkText,
+    startSection: continuingSection,
+    charCount: chunkText.length,
   };
+  
+  const selectedModel = selectModel(chunkInfo, totalChunks);
+  const modelInfo = OPENAI_MODELS[selectedModel];
+  
+  const systemPrompt = `You are an expert CV parser for an academic research database. Extract information from this CV chunk into structured JSON.
 
-  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Sending request to OpenAI:`, {
-    model,
-    reasoning_effort: "high",
-    textLength: text.length,
-    systemPromptLength: systemPrompt.length
+${continuingSection ? `NOTE: This chunk continues from a previous section. The text may start mid-section (type: ${continuingSection}). Parse accordingly.` : ''}
+
+CRITICAL INSTRUCTIONS:
+1. The person's NAME is typically at the top of the CV (in chunk 1). Ignore titles like "Ph.D.", "Dr.", "Prof.".
+2. Extract EVERY education entry, work position, publication, etc. found in this chunk.
+3. For dates: use the year (e.g., "2024") or year range start.
+4. DO NOT extract email addresses or phone numbers.
+
+PUBLICATIONS - STRICT DEFINITION:
+INCLUDE: Journal articles, conference papers, books, book chapters, technical reports, preprints.
+EXCLUDE: Patents, press coverage, blog posts, presentations (unless in proceedings).
+
+Extract all fields according to the provided schema. If a category has no entries in this chunk, return an empty array for it.`;
+
+  await sse.send('llm_call', `Sending chunk ${chunkId}/${totalChunks} to ${modelInfo.name}`, {
+    chunkId,
+    totalChunks,
+    inputChars: chunkText.length,
+    continuingSection,
+    model: selectedModel,
+    modelName: modelInfo.name,
+    modelTier: modelInfo.tier,
   });
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiApiKey) throw new Error("OPENAI_API_KEY not configured");
 
-  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Got response with status: ${response.status}`);
+  // Start heartbeat interval
+  const heartbeatInterval = setInterval(() => {
+    sse.sendHeartbeat();
+  }, CONFIG.heartbeatIntervalMs);
+
+  const startTime = Date.now();
+  let response: Response;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CONFIG.apiTimeoutMs);
+
+    try {
+      response = await fetch(
+        `${OPENAI_API_ENDPOINT}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openaiApiKey}`,
+          },
+          body: JSON.stringify({
+            model: selectedModel,
+            messages: [
+              {
+                role: "system",
+                content: systemPrompt,
+              },
+              {
+                role: "user",
+                content: `CV CHUNK ${chunkId}/${totalChunks}:\n\n${chunkText}`,
+              },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "cv_extraction",
+                strict: true,
+                schema: CV_SCHEMA,
+              },
+            },
+            temperature: 0.1,
+          }),
+          signal: controller.signal,
+        }
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } finally {
+    clearInterval(heartbeatInterval);
+  }
+
+  const elapsed = Date.now() - startTime;
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[Chunk ${chunkNumber}/${totalChunks}] OpenAI API error:`, errorText);
-    throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
+    await sse.send('llm_error', `Chunk ${chunkId}/${totalChunks} failed`, {
+      chunkId,
+      status: response.status,
+      error: errorText.substring(0, 500),
+      elapsedMs: elapsed,
+      model: selectedModel,
+    });
+    throw new Error(`OpenAI API error: ${response.status} - ${errorText.substring(0, 200)}`);
   }
 
   const result = await response.json();
-  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Parsed response from OpenAI successfully`);
-
+  
+  // Handle potential refusal
+  if (result.choices?.[0]?.message?.refusal) {
+    throw new Error(`Model refused: ${result.choices[0].message.refusal}`);
+  }
+  
+  if (!result.choices?.[0]?.message?.content) {
+    throw new Error("Invalid OpenAI response structure");
+  }
+  
   const content = result.choices[0].message.content;
-  const parsed = JSON.parse(content);
+  const outputChars = content.length;
 
-  console.log(`[Chunk ${chunkNumber}/${totalChunks}] Extracted data:`, {
-    hasPersonal: !!parsed.personal,
-    educationCount: parsed.education?.length || 0,
-    publicationsCount: parsed.publications?.length || 0,
-    experienceCount: parsed.experience?.length || 0
+  let parsed: Partial<ParsedCV>;
+  try {
+    parsed = JSON.parse(content);
+  } catch (e) {
+    await sse.send('parse_error', `Failed to parse JSON from chunk ${chunkId}`, {
+      chunkId,
+      error: e instanceof Error ? e.message : 'Unknown',
+      contentPreview: content.substring(0, 200),
+    });
+    throw new Error(`JSON parse failed for chunk ${chunkId}: ${e instanceof Error ? e.message : 'Unknown'}`);
+  }
+
+  // Calculate speed metrics
+  const metrics: SpeedMetrics = {
+    inputChars: chunkText.length,
+    outputChars,
+    elapsedMs: elapsed,
+    outputCharsPerSec: elapsed > 0 ? Math.round((outputChars / elapsed) * 1000) : 0,
+  };
+
+  // Count extracted items
+  const itemCounts: Record<string, number> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (Array.isArray(value)) {
+      itemCounts[key] = value.length;
+    }
+  }
+
+  await sse.send('llm_response', `Chunk ${chunkId}/${totalChunks} processed`, {
+    chunkId,
+    totalChunks,
+    model: selectedModel,
+    modelName: modelInfo.name,
+    itemCounts,
+    speed: metrics,
   });
 
-  return parsed;
+  return { parsed, metrics, model: selectedModel };
 }
 
-function mergeChunkResults(chunkResults: any[]): any {
-  const merged = {
-    personal: {},
+// ============================================================================
+// MERGE CHUNK RESULTS
+// ============================================================================
+
+function mergeResults(chunks: Partial<ParsedCV>[]): ParsedCV {
+  const merged: ParsedCV = {
+    personal: { firstName: '', lastName: '', birthYear: null, birthCountry: null },
     education: [],
     publications: [],
     experience: [],
@@ -283,12 +893,23 @@ function mergeChunkResults(chunkResults: any[]): any {
     teaching: [],
     supervision: [],
     memberships: [],
-    awards: []
+    awards: [],
   };
 
-  for (const chunk of chunkResults) {
-    if (chunk.personal && chunk.personal.firstName) {
-      merged.personal = chunk.personal;
+  for (const chunk of chunks) {
+    if (chunk.personal) {
+      if (!merged.personal.firstName && chunk.personal.firstName) {
+        merged.personal.firstName = normalizeName(chunk.personal.firstName);
+      }
+      if (!merged.personal.lastName && chunk.personal.lastName) {
+        merged.personal.lastName = normalizeName(chunk.personal.lastName);
+      }
+      if (!merged.personal.birthYear && chunk.personal.birthYear) {
+        merged.personal.birthYear = chunk.personal.birthYear;
+      }
+      if (!merged.personal.birthCountry && chunk.personal.birthCountry) {
+        merged.personal.birthCountry = chunk.personal.birthCountry;
+      }
     }
 
     if (chunk.education) merged.education.push(...chunk.education);
@@ -301,190 +922,272 @@ function mergeChunkResults(chunkResults: any[]): any {
     if (chunk.awards) merged.awards.push(...chunk.awards);
   }
 
-  const deduplicatePublications = (pubs: any[]) => {
-    const seen = new Set();
-    return pubs.filter(pub => {
-      const key = `${pub.title}-${pub.publicationYear}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  };
-
-  merged.publications = deduplicatePublications(merged.publications);
+  merged.publications = deduplicateByKey(merged.publications, p => `${p.title?.toLowerCase()}|${p.publicationYear}`);
+  merged.education = deduplicateByKey(merged.education, e => `${e.institution?.toLowerCase()}|${e.degreeType?.toLowerCase()}`);
+  merged.experience = deduplicateByKey(merged.experience, e => `${e.institution?.toLowerCase()}|${e.positionTitle?.toLowerCase()}|${e.startDate}`);
 
   return merged;
 }
 
+function deduplicateByKey<T>(items: T[], keyFn: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+  
+  return result;
+}
+
+// ============================================================================
+// MAIN HANDLER
+// ============================================================================
+
 Deno.serve(async (req: Request) => {
-  try {
-    if (req.method === "OPTIONS") {
-      return new Response(null, { status: 200, headers: corsHeaders });
-    }
+  const startTime = Date.now();
 
-    const url = new URL(req.url);
-    const pdfFilename = url.searchParams.get("pdfFilename");
-    const model = url.searchParams.get("model") || DEFAULT_MODEL;
-    const apikey = url.searchParams.get("apikey");
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 200, headers: corsHeaders });
+  }
 
-    if (!apikey) {
-      return new Response(
-        JSON.stringify({ error: "Authentication required" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
 
-    if (!pdfFilename) {
-      return new Response(
-        JSON.stringify({ error: "pdfFilename is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+  const sse = new SSEWriter(supabase);
 
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const sendEvent = (event: string, data: any) => {
-          const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-          controller.enqueue(encoder.encode(message));
-        };
+  // Create streaming response
+  const stream = new ReadableStream({
+    async start(controller) {
+      sse.setController(controller);
 
-        const sendKeepAlive = () => {
-          controller.enqueue(encoder.encode(': keepalive\n\n'));
-        };
-
-        let keepAliveInterval: number | undefined;
-
+      try {
+        // Parse request
+        let pdfFilename: string;
+        
         try {
-          keepAliveInterval = setInterval(sendKeepAlive, 15000);
+          const body = await req.json();
+          pdfFilename = body.pdfFilename;
+        } catch (e) {
+          await sse.send('error', 'Invalid JSON in request body', { stage: 'request_parsing' });
+          sse.sendError({ error: 'INVALID_REQUEST', message: 'Invalid JSON in request body' });
+          return;
+        }
 
-          sendEvent('message', {
-            stage: 'extraction_start',
-            message: 'Starting PDF text extraction',
-            timestamp: Date.now()
+        if (!pdfFilename) {
+          await sse.send('error', 'PDF filename is required', { stage: 'validation' });
+          sse.sendError({ error: 'MISSING_FILENAME', message: 'PDF filename is required' });
+          return;
+        }
+
+        await sse.send('start', 'Processing started with OpenAI structured outputs', { 
+          filename: pdfFilename,
+          models: {
+            advanced: OPENAI_MODELS[ADVANCED_MODEL].name,
+            fast: OPENAI_MODELS[DEFAULT_MODEL].name,
+          },
+        });
+        await sse.initLog(pdfFilename, 'OpenAI multi-model');
+
+        // Download PDF
+        await sse.send('pdf_download', 'Downloading PDF...', { filename: pdfFilename });
+        const downloadStart = Date.now();
+        
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from('academiq-cvs')
+          .download(pdfFilename);
+
+        if (downloadError || !fileData) {
+          await sse.send('error', 'PDF download failed', { 
+            stage: 'pdf_download',
+            error: downloadError?.message || 'File not found',
           });
+          await sse.fail({ stage: 'pdf_download', error: downloadError?.message });
+          sse.sendError({ error: 'PDF_DOWNLOAD_FAILED', message: downloadError?.message || 'File not found' });
+          return;
+        }
 
-          const supabase = createClient(
-            Deno.env.get("SUPABASE_URL")!,
-            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-          );
+        const downloadMs = Date.now() - downloadStart;
+        const fileSize = fileData.size;
+        await sse.send('pdf_download', 'PDF downloaded', { bytes: fileSize, ms: downloadMs });
 
-          const { data: fileData, error: downloadError } = await supabase.storage
-            .from('academiq-cvs')
-            .download(pdfFilename);
-
-          if (downloadError || !fileData) {
-            throw new Error(`Failed to download PDF: ${downloadError?.message}`);
-          }
-
+        // Extract text
+        await sse.send('text_extraction', 'Extracting text from PDF...', {});
+        const extractStart = Date.now();
+        
+        let cvText: string;
+        try {
           const arrayBuffer = await fileData.arrayBuffer();
-          const fullText = await extractFullPDFText(arrayBuffer);
-
-          sendEvent('message', {
-            stage: 'extraction_complete',
-            message: `Extracted ${fullText.length} characters`,
-            timestamp: Date.now(),
-            details: { textLength: fullText.length }
+          cvText = await extractTextFromPDF(arrayBuffer);
+        } catch (error) {
+          await sse.send('error', 'PDF text extraction failed', {
+            stage: 'text_extraction',
+            error: error instanceof Error ? error.message : 'Unknown',
           });
+          await sse.fail({ stage: 'text_extraction', error: error instanceof Error ? error.message : 'Unknown' });
+          sse.sendError({ error: 'PDF_PARSE_FAILED', message: error instanceof Error ? error.message : 'Unknown' });
+          return;
+        }
 
-          const chunks = splitIntoChunks(fullText);
-          const totalChunks = chunks.length;
+        const extractMs = Date.now() - extractStart;
+        await sse.send('text_extraction', 'Text extracted', { chars: cvText.length, ms: extractMs });
 
-          sendEvent('message', {
-            stage: 'chunking_complete',
-            message: `Split into ${totalChunks} chunks`,
-            timestamp: Date.now(),
-            details: { totalChunks }
-          });
+        if (cvText.trim().length < 100) {
+          await sse.send('error', 'PDF contains no readable text', { stage: 'text_validation', chars: cvText.trim().length });
+          await sse.fail({ stage: 'text_validation', error: 'No readable text' });
+          sse.sendError({ error: 'NO_TEXT', message: 'PDF contains no readable text or is too short' });
+          return;
+        }
 
-          const chunkResults = [];
+        // Clean sensitive data
+        cvText = removeSensitiveData(cvText);
+        await sse.send('text_cleaning', 'Sensitive data removed', { chars: cvText.length });
 
-          for (let i = 0; i < chunks.length; i++) {
-            const chunkNumber = i + 1;
+        // Detect section headers
+        await sse.send('section_detection', 'Detecting section headers...', {});
+        const headers = detectSectionHeaders(cvText);
+        await sse.send('section_detection', `Found ${headers.length} section headers`, {
+          count: headers.length,
+          sections: headers.map(h => ({ text: h.text.substring(0, 50), type: h.type, position: h.position })),
+        });
 
-            sendEvent('message', {
-              stage: 'chunk_start',
-              message: `Processing chunk ${chunkNumber}/${totalChunks}`,
-              timestamp: Date.now(),
-              details: {
-                chunkNumber,
-                totalChunks,
-                chunkSize: chunks[i].length,
-                progress: Math.round((i / totalChunks) * 100)
-              }
-            });
+        // Split into chunks
+        await sse.send('chunking', 'Splitting CV into chunks...', { totalChars: cvText.length, targetChunkSize: CONFIG.chunkSize });
+        const chunks = splitIntoChunks(cvText, headers, CONFIG.chunkSize);
+        await sse.send('chunking', `Split into ${chunks.length} chunks`, {
+          totalChunks: chunks.length,
+          chunks: chunks.map(c => ({ id: c.id, chars: c.charCount, startSection: c.startSection })),
+        });
 
-            try {
-              const chunkResult = await parseChunk(chunks[i], model, chunkNumber, totalChunks);
-              chunkResults.push(chunkResult);
-            } catch (chunkError) {
-              sendEvent('message', {
-                stage: 'chunk_error',
-                message: `Error processing chunk ${chunkNumber}: ${chunkError instanceof Error ? chunkError.message : 'Unknown error'}`,
-                timestamp: Date.now(),
-                details: { chunkNumber, totalChunks }
-              });
-              throw chunkError;
+        await sse.updateProgress(0, chunks.length);
+
+        // Process each chunk
+        const chunkResults: Partial<ParsedCV>[] = [];
+        const allMetrics: SpeedMetrics[] = [];
+        const modelUsage: Record<string, number> = {};
+        let lastSection: string | null = null;
+
+        for (const chunk of chunks) {
+          try {
+            const continuingSection = chunk.startSection || lastSection;
+            const { parsed, metrics, model } = await extractFromChunk(
+              chunk.text,
+              chunk.id,
+              chunks.length,
+              continuingSection,
+              sse
+            );
+            chunkResults.push(parsed);
+            allMetrics.push(metrics);
+            
+            // Track model usage
+            modelUsage[model] = (modelUsage[model] || 0) + 1;
+            
+            if (chunk.startSection) {
+              lastSection = chunk.startSection;
             }
 
-            sendEvent('message', {
-              stage: 'chunk_complete',
-              message: `Completed chunk ${chunkNumber}/${totalChunks}`,
-              timestamp: Date.now(),
-              details: {
-                chunkNumber,
-                totalChunks,
-                progress: Math.round(((i + 1) / totalChunks) * 100)
-              }
+            await sse.updateProgress(chunk.id, chunks.length);
+          } catch (error) {
+            await sse.send('chunk_error', `Failed to process chunk ${chunk.id}`, {
+              chunkId: chunk.id,
+              error: error instanceof Error ? error.message : 'Unknown',
             });
-          }
-
-          const mergedResult = mergeChunkResults(chunkResults);
-
-          sendEvent('message', {
-            stage: 'complete',
-            message: 'CV parsing completed',
-            timestamp: Date.now(),
-            result: mergedResult
-          });
-
-          controller.close();
-
-        } catch (error) {
-          sendEvent('message', {
-            stage: 'error',
-            message: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: Date.now()
-          });
-          controller.close();
-        } finally {
-          if (keepAliveInterval !== undefined) {
-            clearInterval(keepAliveInterval);
+            chunkResults.push({});
           }
         }
-      }
-    });
 
-    return new Response(stream, {
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-      }
-    });
+        // Merge results
+        await sse.send('merging', 'Merging chunk results...', { chunkCount: chunkResults.length });
+        const mergedResult = mergeResults(chunkResults);
 
-  } catch (error) {
-    console.error("Edge function error:", error);
-    return new Response(
-      JSON.stringify({
-        stage: "error",
-        error: { message: error instanceof Error ? error.message : "Unknown error" }
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
+        const totalMs = Date.now() - startTime;
+        
+        // Calculate aggregate speed metrics
+        const totalInputChars = allMetrics.reduce((sum, m) => sum + m.inputChars, 0);
+        const totalOutputChars = allMetrics.reduce((sum, m) => sum + m.outputChars, 0);
+        const totalLlmMs = allMetrics.reduce((sum, m) => sum + m.elapsedMs, 0);
+        const avgOutputCharsPerSec = totalLlmMs > 0 ? Math.round((totalOutputChars / totalLlmMs) * 1000) : 0;
+
+        // Create summary
+        const resultSummary = {
+          personal: `${mergedResult.personal.firstName} ${mergedResult.personal.lastName}`,
+          education: mergedResult.education.length,
+          publications: mergedResult.publications.length,
+          experience: mergedResult.experience.length,
+          grants: mergedResult.grants.length,
+          teaching: mergedResult.teaching.length,
+          supervision: mergedResult.supervision.length,
+          memberships: mergedResult.memberships.length,
+          awards: mergedResult.awards.length,
+          totalMs,
+          chunks: chunks.length,
+          modelUsage,
+          speed: {
+            totalInputChars,
+            totalOutputChars,
+            totalLlmMs,
+            avgOutputCharsPerSec,
+          },
+        };
+
+        await sse.send('complete', 'Processing complete', resultSummary);
+        await sse.complete(resultSummary);
+
+        // Check for duplicates
+        const { data: existing } = await supabase
+          .from("persons")
+          .select("id, first_name, last_name, created_at")
+          .eq("first_name", mergedResult.personal.firstName)
+          .eq("last_name", mergedResult.personal.lastName)
+          .maybeSingle();
+
+        if (existing) {
+          sse.sendFinal({
+            warning: 'DUPLICATE_CV',
+            message: 'A person with this name already exists',
+            existingPerson: existing,
+            result: mergedResult,
+            _metadata: resultSummary,
+          });
+        } else {
+          sse.sendFinal({
+            ...mergedResult,
+            _metadata: resultSummary,
+          });
+        }
+
+      } catch (error) {
+        console.error('Unexpected error:', error);
+        await sse.send('error', 'Unexpected error occurred', {
+          stage: 'unknown',
+          error: error instanceof Error ? error.message : 'Unknown',
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+        await sse.fail({
+          stage: 'unknown',
+          error: error instanceof Error ? error.message : 'Unknown',
+        });
+        sse.sendError({
+          error: 'UNEXPECTED_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
       }
-    );
-  }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  });
 });
