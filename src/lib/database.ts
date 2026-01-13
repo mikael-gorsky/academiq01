@@ -248,7 +248,7 @@ export async function getAnalyticsData() {
 
   const { data: publications, error: pubsError } = await supabase
     .from('academiq_publications')
-    .select('person_id, publication_year');
+    .select('person_id, publication_year, publication_type');
 
   const { data: education, error: eduError } = await supabase
     .from('academiq_education')
@@ -384,6 +384,198 @@ export async function getAnalyticsData() {
       }
     : null;
 
+  // Helper function to categorize publication type
+  const categorizePublicationType = (type: string | null | undefined): string => {
+    if (!type) return 'Other';
+    const lowerType = type.toLowerCase();
+    if (lowerType.includes('conference')) return 'Conference';
+    if (lowerType.includes('ranked') && lowerType.includes('q1')) return 'Q1';
+    if (lowerType.includes('ranked') && lowerType.includes('q2')) return 'Q2';
+    if (lowerType.includes('ranked') && lowerType.includes('q3')) return 'Q3';
+    if (lowerType.includes('ranked') && lowerType.includes('journal')) return 'RankedJournal';
+    if (lowerType.includes('journal') || lowerType.includes('article')) return 'OtherJournal';
+    return 'Other';
+  };
+
+  // Compute ranked journals distributions (Q1, Q2, Q3 only)
+  const rankedJournalPubCountDistribution = {
+    '0-5': 0,
+    '6-10': 0,
+    '11-20': 0,
+    '21-50': 0,
+    '50+': 0,
+  };
+
+  const rankedJournalCounts = persons?.map(p => {
+    const personPubs = publications?.filter(pub => {
+      if (pub.person_id !== p.id) return false;
+      const category = categorizePublicationType(pub.publication_type);
+      return ['Q1', 'Q2', 'Q3', 'RankedJournal'].includes(category);
+    });
+    return personPubs?.length || 0;
+  }) || [];
+
+  rankedJournalCounts.forEach(count => {
+    if (count <= 5) rankedJournalPubCountDistribution['0-5']++;
+    else if (count <= 10) rankedJournalPubCountDistribution['6-10']++;
+    else if (count <= 20) rankedJournalPubCountDistribution['11-20']++;
+    else if (count <= 50) rankedJournalPubCountDistribution['21-50']++;
+    else rankedJournalPubCountDistribution['50+']++;
+  });
+
+  const avgRankedJournalPubs = rankedJournalCounts.length > 0
+    ? rankedJournalCounts.reduce((sum, count) => sum + count, 0) / rankedJournalCounts.length
+    : 0;
+
+  // Conference publications distributions
+  const conferencePubCountDistribution = {
+    '0-5': 0,
+    '6-10': 0,
+    '11-20': 0,
+    '21-50': 0,
+    '50+': 0,
+  };
+
+  const conferenceCounts = persons?.map(p => {
+    const personPubs = publications?.filter(pub => {
+      if (pub.person_id !== p.id) return false;
+      return categorizePublicationType(pub.publication_type) === 'Conference';
+    });
+    return personPubs?.length || 0;
+  }) || [];
+
+  conferenceCounts.forEach(count => {
+    if (count <= 5) conferencePubCountDistribution['0-5']++;
+    else if (count <= 10) conferencePubCountDistribution['6-10']++;
+    else if (count <= 20) conferencePubCountDistribution['11-20']++;
+    else if (count <= 50) conferencePubCountDistribution['21-50']++;
+    else conferencePubCountDistribution['50+']++;
+  });
+
+  const avgConferencePubs = conferenceCounts.length > 0
+    ? conferenceCounts.reduce((sum, count) => sum + count, 0) / conferenceCounts.length
+    : 0;
+
+  // Years since last ranked journal publication
+  const yearsSinceLastRankedJournal = persons?.map(p => {
+    const personPubs = publications?.filter(pub => {
+      if (pub.person_id !== p.id) return false;
+      const category = categorizePublicationType(pub.publication_type);
+      return ['Q1', 'Q2', 'Q3', 'RankedJournal'].includes(category);
+    });
+    if (!personPubs || personPubs.length === 0) return null;
+    const latestYear = Math.max(...personPubs.map(pub => pub.publication_year));
+    return currentYear - latestYear;
+  }).filter(y => y !== null) as number[] || [];
+
+  const avgYearsSinceLastRankedJournal = yearsSinceLastRankedJournal.length > 0
+    ? Math.round(yearsSinceLastRankedJournal.reduce((sum, y) => sum + y, 0) / yearsSinceLastRankedJournal.length)
+    : 0;
+
+  const lastRankedJournalDistribution = {
+    '0-2': 0,
+    '3-5': 0,
+    '6-10': 0,
+    '10+': 0,
+  };
+
+  yearsSinceLastRankedJournal.forEach(years => {
+    if (years <= 2) lastRankedJournalDistribution['0-2']++;
+    else if (years <= 5) lastRankedJournalDistribution['3-5']++;
+    else if (years <= 10) lastRankedJournalDistribution['6-10']++;
+    else lastRankedJournalDistribution['10+']++;
+  });
+
+  // Years since last conference publication
+  const yearsSinceLastConference = persons?.map(p => {
+    const personPubs = publications?.filter(pub => {
+      if (pub.person_id !== p.id) return false;
+      return categorizePublicationType(pub.publication_type) === 'Conference';
+    });
+    if (!personPubs || personPubs.length === 0) return null;
+    const latestYear = Math.max(...personPubs.map(pub => pub.publication_year));
+    return currentYear - latestYear;
+  }).filter(y => y !== null) as number[] || [];
+
+  const avgYearsSinceLastConference = yearsSinceLastConference.length > 0
+    ? Math.round(yearsSinceLastConference.reduce((sum, y) => sum + y, 0) / yearsSinceLastConference.length)
+    : 0;
+
+  const lastConferenceDistribution = {
+    '0-2': 0,
+    '3-5': 0,
+    '6-10': 0,
+    '10+': 0,
+  };
+
+  yearsSinceLastConference.forEach(years => {
+    if (years <= 2) lastConferenceDistribution['0-2']++;
+    else if (years <= 5) lastConferenceDistribution['3-5']++;
+    else if (years <= 10) lastConferenceDistribution['6-10']++;
+    else lastConferenceDistribution['10+']++;
+  });
+
+  // Recent ranked journal publications (last 5 years)
+  const recentRankedJournalCounts = persons?.map(p => {
+    const personPubs = publications?.filter(pub => {
+      if (pub.person_id !== p.id) return false;
+      if (pub.publication_year < currentYear - 5) return false;
+      const category = categorizePublicationType(pub.publication_type);
+      return ['Q1', 'Q2', 'Q3', 'RankedJournal'].includes(category);
+    });
+    return personPubs?.length || 0;
+  }) || [];
+
+  const avgRecentRankedJournalPubs = recentRankedJournalCounts.length > 0
+    ? recentRankedJournalCounts.reduce((sum, count) => sum + count, 0) / recentRankedJournalCounts.length
+    : 0;
+
+  const recentRankedJournalDistribution = {
+    '0': 0,
+    '1-2': 0,
+    '3-5': 0,
+    '6-10': 0,
+    '10+': 0,
+  };
+
+  recentRankedJournalCounts.forEach(count => {
+    if (count === 0) recentRankedJournalDistribution['0']++;
+    else if (count <= 2) recentRankedJournalDistribution['1-2']++;
+    else if (count <= 5) recentRankedJournalDistribution['3-5']++;
+    else if (count <= 10) recentRankedJournalDistribution['6-10']++;
+    else recentRankedJournalDistribution['10+']++;
+  });
+
+  // Recent conference publications (last 5 years)
+  const recentConferenceCounts = persons?.map(p => {
+    const personPubs = publications?.filter(pub => {
+      if (pub.person_id !== p.id) return false;
+      if (pub.publication_year < currentYear - 5) return false;
+      return categorizePublicationType(pub.publication_type) === 'Conference';
+    });
+    return personPubs?.length || 0;
+  }) || [];
+
+  const avgRecentConferencePubs = recentConferenceCounts.length > 0
+    ? recentConferenceCounts.reduce((sum, count) => sum + count, 0) / recentConferenceCounts.length
+    : 0;
+
+  const recentConferenceDistribution = {
+    '0': 0,
+    '1-2': 0,
+    '3-5': 0,
+    '6-10': 0,
+    '10+': 0,
+  };
+
+  recentConferenceCounts.forEach(count => {
+    if (count === 0) recentConferenceDistribution['0']++;
+    else if (count <= 2) recentConferenceDistribution['1-2']++;
+    else if (count <= 5) recentConferenceDistribution['3-5']++;
+    else if (count <= 10) recentConferenceDistribution['6-10']++;
+    else recentConferenceDistribution['10+']++;
+  });
+
   return {
     totalPersons,
     totalPublications,
@@ -399,6 +591,19 @@ export async function getAnalyticsData() {
     avgRecentPublications,
     recentPubDistribution,
     dateRange,
+    // Publication type-specific analytics
+    avgRankedJournalPubs,
+    rankedJournalPubCountDistribution,
+    avgConferencePubs,
+    conferencePubCountDistribution,
+    avgYearsSinceLastRankedJournal,
+    lastRankedJournalDistribution,
+    avgYearsSinceLastConference,
+    lastConferenceDistribution,
+    avgRecentRankedJournalPubs,
+    recentRankedJournalDistribution,
+    avgRecentConferencePubs,
+    recentConferenceDistribution,
   };
 }
 
