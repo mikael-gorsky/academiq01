@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { GraduationCap, Plus, BarChart3 } from 'lucide-react';
+import { GraduationCap, Plus, BarChart3, Menu, X } from 'lucide-react';
 import { ToastProvider } from './components/ui/Toast';
 import Dashboard from './components/Dashboard';
 import UploadZone from './components/UploadZone';
@@ -14,6 +14,7 @@ function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [selectedResearcherId, setSelectedResearcherId] = useState<string | null>(null);
   const [databaseReady, setDatabaseReady] = useState<boolean | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const checkDatabase = async () => {
@@ -46,11 +47,23 @@ function App() {
     setSelectedResearcherId(null);
   };
 
+  const handleNavClick = (view: View) => {
+    setCurrentView(view);
+    setMobileMenuOpen(false);
+  };
+
   const navButtonClass = (view: View) =>
     `flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
       currentView === view
         ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-blue-500/30'
         : 'bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-200'
+    }`;
+
+  const mobileNavButtonClass = (view: View) =>
+    `flex items-center gap-3 w-full px-4 py-3 rounded-lg font-medium transition-all ${
+      currentView === view
+        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white'
+        : 'text-slate-700 hover:bg-slate-100'
     }`;
 
   if (databaseReady === null) {
@@ -89,25 +102,65 @@ function App() {
               </button>
 
               {currentView !== 'researcher' && (
-                <nav className="flex gap-3">
-                  <button onClick={() => setCurrentView('dashboard')} className={navButtonClass('dashboard')}>
+                <>
+                  {/* Desktop Navigation */}
+                  <nav className="hidden md:flex gap-3">
+                    <button onClick={() => handleNavClick('dashboard')} className={navButtonClass('dashboard')}>
+                      <BarChart3 className="w-5 h-5" />
+                      Dashboard
+                    </button>
+                    <button onClick={() => handleNavClick('library')} className={navButtonClass('library')}>
+                      <GraduationCap className="w-5 h-5" />
+                      Academics
+                    </button>
+                    <button onClick={() => handleNavClick('analytics')} className={navButtonClass('analytics')}>
+                      <BarChart3 className="w-5 h-5" />
+                      Analytics
+                    </button>
+                    <button onClick={() => handleNavClick('upload')} className={navButtonClass('upload')}>
+                      <Plus className="w-5 h-5" />
+                    </button>
+                  </nav>
+
+                  {/* Mobile Menu Button */}
+                  <button
+                    onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                    className="md:hidden p-2 rounded-lg hover:bg-slate-100 transition-colors"
+                    aria-label="Toggle menu"
+                  >
+                    {mobileMenuOpen ? (
+                      <X className="w-6 h-6 text-slate-700" />
+                    ) : (
+                      <Menu className="w-6 h-6 text-slate-700" />
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Mobile Menu Dropdown */}
+            {mobileMenuOpen && currentView !== 'researcher' && (
+              <div className="md:hidden border-t border-slate-200 bg-white animate-fadeIn">
+                <nav className="px-4 py-3 space-y-1">
+                  <button onClick={() => handleNavClick('dashboard')} className={mobileNavButtonClass('dashboard')}>
                     <BarChart3 className="w-5 h-5" />
                     Dashboard
                   </button>
-                  <button onClick={() => setCurrentView('library')} className={navButtonClass('library')}>
+                  <button onClick={() => handleNavClick('library')} className={mobileNavButtonClass('library')}>
                     <GraduationCap className="w-5 h-5" />
                     Academics
                   </button>
-                  <button onClick={() => setCurrentView('analytics')} className={navButtonClass('analytics')}>
+                  <button onClick={() => handleNavClick('analytics')} className={mobileNavButtonClass('analytics')}>
                     <BarChart3 className="w-5 h-5" />
                     Analytics
                   </button>
-                  <button onClick={() => setCurrentView('upload')} className={navButtonClass('upload')}>
+                  <button onClick={() => handleNavClick('upload')} className={mobileNavButtonClass('upload')}>
                     <Plus className="w-5 h-5" />
+                    Upload CV
                   </button>
                 </nav>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </header>
 

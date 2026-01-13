@@ -743,6 +743,20 @@ PUBLICATIONS - STRICT DEFINITION:
 INCLUDE: Journal articles, conference papers, books, book chapters, technical reports, preprints.
 EXCLUDE: Patents, press coverage, blog posts, presentations (unless in proceedings).
 
+PUBLICATION TYPE CLASSIFICATION - VERY IMPORTANT:
+Look for ranking indicators in the publication text:
+- If you see "WoS: Q1" or "SCImago: Q1" or "IF:" with high value (>3) → "Ranked Journal Article (Q1)"
+- If you see "WoS: Q2" or "SCImago: Q2" or moderate IF (1-3) → "Ranked Journal Article (Q2)"
+- If you see "WoS: Q3" or "SCImago: Q3" or lower IF (<1) → "Ranked Journal Article (Q3)"
+- If journal name contains "IEEE Transactions" or "ACM Transactions" → "Ranked Journal Article"
+- If section header says "Ranked" or "Refereed" with ranking info → extract the ranking
+- For conference papers (FOCS, STOC, AAAI, EC, NeurIPS, ICML, etc.) → "Conference Paper"
+- For book chapters → "Book Chapter"
+- For books → "Book"
+- For journal articles with no ranking info → "Journal Article"
+- For preprints or working papers → "Preprint"
+- For technical reports → "Technical Report"
+
 Extract all fields according to the provided schema. If a category has no entries in this chunk, return an empty array for it.`;
 
   await sse.send('llm_call', `Sending chunk ${chunkId}/${totalChunks} to ${modelInfo.name}`, {

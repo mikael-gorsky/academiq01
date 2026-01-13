@@ -2,13 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   Filter,
-  BookOpen,
-  Award,
   GraduationCap,
   Loader2,
   X,
   ArrowRight,
-  Sparkles,
   TrendingUp,
   Trash2,
   CheckSquare,
@@ -35,6 +32,8 @@ interface PersonData {
   publications: Array<{
     title: string;
     publication_year: number;
+    publication_type?: string;
+    citation_count?: number;
   }>;
   experience: Array<{
     position_title: string;
@@ -126,6 +125,40 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
     return highest || degrees[0] || 'N/A';
   };
 
+  const categorizePublicationType = (type: string | undefined): string => {
+    if (!type) return 'Other';
+    const lowerType = type.toLowerCase();
+
+    if (lowerType.includes('book') && !lowerType.includes('chapter')) return 'Books';
+    if (lowerType.includes('book chapter') || lowerType.includes('chapter')) return 'Book Chapters';
+    if (lowerType.includes('conference')) return 'Conference Papers';
+    if (lowerType.includes('ranked') && (lowerType.includes('q1') || lowerType.includes('q2') || lowerType.includes('q3') || lowerType.includes('journal'))) {
+      return 'Ranked Refereed Journals';
+    }
+    if (lowerType.includes('journal') || lowerType.includes('article')) {
+      return 'Non-Ranked Refereed Journals';
+    }
+    return 'Other';
+  };
+
+  const getPublicationsByType = (person: PersonData) => {
+    const counts = {
+      'Books': 0,
+      'Book Chapters': 0,
+      'Ranked Refereed Journals': 0,
+      'Non-Ranked Refereed Journals': 0,
+      'Conference Papers': 0,
+      'Other': 0,
+    };
+
+    person.publications.forEach((pub) => {
+      const category = categorizePublicationType(pub.publication_type);
+      counts[category as keyof typeof counts]++;
+    });
+
+    return counts;
+  };
+
   const filteredAndSortedCVs = useMemo(() => {
     let filtered = persons.filter((person) => {
       const fullName = `${person.first_name} ${person.last_name}`.toLowerCase();
@@ -184,13 +217,9 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
     filtered.sort((a, b) => {
       switch (sortBy) {
         case 'name-asc':
-          return `${a.first_name} ${a.last_name}`.localeCompare(
-            `${b.first_name} ${b.last_name}`
-          );
+          return a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name);
         case 'name-desc':
-          return `${b.first_name} ${b.last_name}`.localeCompare(
-            `${a.first_name} ${a.last_name}`
-          );
+          return b.last_name.localeCompare(a.last_name) || b.first_name.localeCompare(a.first_name);
         case 'date-new':
           return new Date(b.imported_at).getTime() - new Date(a.imported_at).getTime();
         case 'date-old':
@@ -352,31 +381,29 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
   if (filteredAndSortedCVs.length === 0) {
     return (
       <div className="space-y-6">
-        <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
+        <div className="bg-white rounded-xl shadow-sm p-4 md:p-6 border border-slate-200">
+          <div className="flex flex-col gap-4 mb-6">
+            <div className="flex items-center gap-3 flex-wrap">
               <GraduationCap className="w-6 h-6 text-cyan-600" />
-              <h2 className="text-2xl font-bold text-slate-800">Faculty</h2>
+              <h2 className="text-xl md:text-2xl font-bold text-slate-800">Faculty</h2>
             </div>
-            <div className="flex gap-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search faculty..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-10 py-2 w-80 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-                {searchTerm && (
-                  <button
-                    onClick={() => setSearchTerm('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search faculty..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-10 py-2 w-full border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -403,11 +430,11 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
+      <div className="bg-white rounded-xl shadow-sm p-4 md:p-6 border border-slate-200">
+        <div className="flex flex-col gap-4 mb-6">
+          <div className="flex items-center gap-3 flex-wrap">
             <GraduationCap className="w-6 h-6 text-cyan-600" />
-            <h2 className="text-2xl font-bold text-slate-800">Faculty</h2>
+            <h2 className="text-xl md:text-2xl font-bold text-slate-800">Faculty</h2>
             <span className="px-3 py-1 bg-cyan-100 text-cyan-800 rounded-full text-sm font-semibold">
               {filteredAndSortedCVs.length} {filteredAndSortedCVs.length === 1 ? 'member' : 'members'}
             </span>
@@ -418,24 +445,15 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
             )}
           </div>
 
-          <div className="flex gap-3">
-            {selectedIds.size > 0 && (
-              <button
-                onClick={handleBulkDeleteClick}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete {selectedIds.size} {selectedIds.size === 1 ? 'researcher' : 'researchers'}
-              </button>
-            )}
-            <div className="relative">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="text"
                 placeholder="Search faculty..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-10 py-2 w-80 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                className="pl-10 pr-10 py-2 w-full border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
               />
               {searchTerm && (
                 <button
@@ -448,14 +466,14 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
             </div>
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors ${
+              className={`flex items-center justify-center gap-2 px-4 py-2 border rounded-lg transition-colors ${
                 showFilters || activeFilterCount > 0
                   ? 'border-cyan-500 bg-cyan-50 text-cyan-700'
                   : 'border-slate-300 hover:bg-slate-50'
               }`}
             >
               <Filter className="w-5 h-5" />
-              Filters
+              <span className="whitespace-nowrap">Filters</span>
               {activeFilterCount > 0 && (
                 <span className="px-2 py-0.5 bg-cyan-600 text-white rounded-full text-xs font-semibold">
                   {activeFilterCount}
@@ -463,6 +481,16 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
               )}
             </button>
           </div>
+
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleBulkDeleteClick}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors w-full sm:w-auto"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete {selectedIds.size} {selectedIds.size === 1 ? 'researcher' : 'researchers'}
+            </button>
+          )}
         </div>
 
         {searchTerm && (
@@ -557,8 +585,8 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
           </div>
         )}
 
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <button
               onClick={toggleSelectAll}
               className="flex items-center gap-2 px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-sm"
@@ -566,12 +594,12 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
               {selectedIds.size === filteredAndSortedCVs.length ? (
                 <>
                   <CheckSquare className="w-4 h-4 text-cyan-600" />
-                  Deselect All
+                  <span className="whitespace-nowrap">Deselect All</span>
                 </>
               ) : (
                 <>
                   <Square className="w-4 h-4" />
-                  Select All
+                  <span className="whitespace-nowrap">Select All</span>
                 </>
               )}
             </button>
@@ -582,7 +610,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as any)}
-            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 w-full sm:w-auto"
           >
             <option value="date-new">Import Date (newest first)</option>
             <option value="date-old">Import Date (oldest first)</option>
@@ -599,6 +627,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
             const position = getCurrentPosition(person);
             const lastPubYear = getLastPublicationYear(person);
             const isProlific = person.publications.length >= 50;
+            const pubsByType = getPublicationsByType(person);
 
             const importDate = new Date(person.imported_at);
             const day = String(importDate.getDate()).padStart(2, '0');
@@ -667,21 +696,58 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
                 </div>
 
                 <div className="space-y-2 text-sm text-slate-700 mb-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between mb-2">
                     <span className="flex items-center gap-1">
                       <GraduationCap className="w-4 h-4 text-cyan-600" />
                       {getHighestDegree(person)}
                     </span>
-                    <span className="flex items-center gap-1">
-                      <BookOpen className="w-4 h-4 text-emerald-600" />
-                      {person.publications.length} pubs
-                    </span>
+                    {lastPubYear && (
+                      <span className="text-xs text-slate-500">Last pub: {lastPubYear}</span>
+                    )}
                   </div>
-                  {lastPubYear && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-500">Last publication: {lastPubYear}</span>
-                    </div>
-                  )}
+
+                  <div className="text-xs space-y-1 bg-slate-50 p-2 rounded">
+                    <div className="font-semibold text-slate-600 mb-1">Publications:</div>
+                    {pubsByType.Books > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Books:</span>
+                        <span className="font-medium text-slate-800">{pubsByType.Books}</span>
+                      </div>
+                    )}
+                    {pubsByType['Book Chapters'] > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Book Chapters:</span>
+                        <span className="font-medium text-slate-800">{pubsByType['Book Chapters']}</span>
+                      </div>
+                    )}
+                    {pubsByType['Ranked Refereed Journals'] > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Ranked Journals:</span>
+                        <span className="font-medium text-slate-800">{pubsByType['Ranked Refereed Journals']}</span>
+                      </div>
+                    )}
+                    {pubsByType['Non-Ranked Refereed Journals'] > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Other Journals:</span>
+                        <span className="font-medium text-slate-800">{pubsByType['Non-Ranked Refereed Journals']}</span>
+                      </div>
+                    )}
+                    {pubsByType['Conference Papers'] > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Conferences:</span>
+                        <span className="font-medium text-slate-800">{pubsByType['Conference Papers']}</span>
+                      </div>
+                    )}
+                    {pubsByType.Other > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Other:</span>
+                        <span className="font-medium text-slate-800">{pubsByType.Other}</span>
+                      </div>
+                    )}
+                    {person.publications.length === 0 && (
+                      <div className="text-slate-500 italic">No publications</div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="pt-3 border-t border-slate-200">

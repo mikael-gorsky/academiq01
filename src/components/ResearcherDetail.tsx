@@ -116,6 +116,56 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
     return 'text-slate-500';
   };
 
+  const categorizePublication = (type: string | undefined): string => {
+    if (!type) return 'Other';
+    const lowerType = type.toLowerCase();
+
+    if (lowerType.includes('ranked') && lowerType.includes('q1')) return 'Ranked Journals (Q1)';
+    if (lowerType.includes('ranked') && lowerType.includes('q2')) return 'Ranked Journals (Q2)';
+    if (lowerType.includes('ranked') && lowerType.includes('q3')) return 'Ranked Journals (Q3)';
+    if (lowerType.includes('ranked') && lowerType.includes('journal')) return 'Ranked Journals';
+    if (lowerType.includes('journal') || lowerType.includes('article')) return 'Other Journals';
+    if (lowerType.includes('conference')) return 'Conference Papers';
+    if (lowerType.includes('book') && lowerType.includes('chapter')) return 'Book Chapters';
+    if (lowerType.includes('book')) return 'Books';
+    if (lowerType.includes('preprint')) return 'Preprints';
+    return 'Other';
+  };
+
+  const getCategoryColor = (category: string) => {
+    switch (category) {
+      case 'Ranked Journals (Q1)': return 'border-emerald-500 bg-emerald-50';
+      case 'Ranked Journals (Q2)': return 'border-cyan-500 bg-cyan-50';
+      case 'Ranked Journals (Q3)': return 'border-blue-500 bg-blue-50';
+      case 'Ranked Journals': return 'border-teal-500 bg-teal-50';
+      case 'Other Journals': return 'border-slate-400 bg-slate-50';
+      case 'Conference Papers': return 'border-purple-500 bg-purple-50';
+      case 'Book Chapters': return 'border-amber-500 bg-amber-50';
+      case 'Books': return 'border-orange-500 bg-orange-50';
+      default: return 'border-slate-300 bg-slate-50';
+    }
+  };
+
+  const groupedPublications = sortedPublications.reduce((acc: Record<string, any[]>, pub: any) => {
+    const category = categorizePublication(pub.publication_type);
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(pub);
+    return acc;
+  }, {});
+
+  const categoryOrder = [
+    'Ranked Journals (Q1)',
+    'Ranked Journals (Q2)',
+    'Ranked Journals (Q3)',
+    'Ranked Journals',
+    'Other Journals',
+    'Conference Papers',
+    'Books',
+    'Book Chapters',
+    'Preprints',
+    'Other'
+  ];
+
   const deleteDetails = [
     'Personal profile',
     `${researcher.publications?.length || 0} publications`,
@@ -231,13 +281,23 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
 
       {sortedPublications.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div className="flex items-center gap-2">
               <FileText className="w-6 h-6 text-cyan-600" />
-              <h2 className="text-2xl font-bold text-slate-800">
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-800">
                 Publications ({sortedPublications.length})
               </h2>
             </div>
+            <div className="flex flex-wrap gap-2">
+              {categoryOrder.filter(cat => groupedPublications[cat]).map(cat => (
+                <span key={cat} className={`px-2 py-1 text-xs font-medium rounded border ${getCategoryColor(cat)}`}>
+                  {cat}: {groupedPublications[cat].length}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-4">
             <select
               value={pubSort}
               onChange={(e) => setPubSort(e.target.value as any)}
@@ -247,38 +307,53 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
               <option value="year-asc">Year (oldest first)</option>
             </select>
           </div>
-          <div className="space-y-4">
-            {sortedPublications.map((pub: any, index: number) => (
-              <div
-                key={index}
-                className="border-l-4 border-cyan-500 pl-4 py-2 hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex items-start gap-3">
-                  <div className={getPublicationAge(pub.publication_year)}>
-                    {getPublicationIcon(pub.publication_type)}
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-bold text-slate-800">{pub.title}</h3>
-                    <p className="text-sm text-slate-600 mt-1">
-                      {pub.venue_name && <span>{pub.venue_name}</span>}
-                      {pub.volume && <span>, Vol. {pub.volume}</span>}
-                      {pub.issue && <span>({pub.issue})</span>}
-                      {pub.pages && <span>, pp. {pub.pages}</span>}
-                      <span className={`ml-2 font-medium ${getPublicationAge(pub.publication_year)}`}>
-                        ({pub.publication_year})
-                      </span>
-                    </p>
-                    {pub.url && (
-                      <a
-                        href={pub.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-cyan-600 hover:text-cyan-700 mt-1 inline-block"
-                      >
-                        View publication →
-                      </a>
-                    )}
-                  </div>
+
+          <div className="space-y-8">
+            {categoryOrder.filter(category => groupedPublications[category]).map(category => (
+              <div key={category}>
+                <h3 className={`text-lg font-bold mb-4 pb-2 border-b-2 ${getCategoryColor(category).replace('bg-', 'border-')}`}>
+                  {category} ({groupedPublications[category].length})
+                </h3>
+                <div className="space-y-4">
+                  {groupedPublications[category].map((pub: any, index: number) => (
+                    <div
+                      key={index}
+                      className={`border-l-4 pl-4 py-2 hover:bg-slate-50 transition-colors rounded-r ${getCategoryColor(category).split(' ')[0]}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={getPublicationAge(pub.publication_year)}>
+                          {getPublicationIcon(pub.publication_type)}
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-bold text-slate-800">{pub.title}</h4>
+                          <p className="text-sm text-slate-600 mt-1">
+                            {pub.venue_name && <span>{pub.venue_name}</span>}
+                            {pub.volume && <span>, Vol. {pub.volume}</span>}
+                            {pub.issue && <span>({pub.issue})</span>}
+                            {pub.pages && <span>, pp. {pub.pages}</span>}
+                            <span className={`ml-2 font-medium ${getPublicationAge(pub.publication_year)}`}>
+                              ({pub.publication_year})
+                            </span>
+                          </p>
+                          {pub.publication_type && (
+                            <span className="inline-block mt-1 px-2 py-0.5 text-xs bg-slate-100 text-slate-600 rounded">
+                              {pub.publication_type}
+                            </span>
+                          )}
+                          {pub.url && (
+                            <a
+                              href={pub.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-cyan-600 hover:text-cyan-700 mt-1 inline-block ml-2"
+                            >
+                              View →
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
