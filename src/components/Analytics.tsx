@@ -293,45 +293,8 @@ export default function Analytics() {
             <p className="text-sm text-slate-500 font-medium">Research output across researchers</p>
           </div>
         </div>
-        <div className="mb-6 p-6 bg-gradient-to-br from-cyan-50 to-blue-50 rounded-xl border-2 border-cyan-200">
-          <div className="text-sm text-slate-600 mb-2 font-semibold uppercase tracking-wide">Average Publications per Researcher</div>
-          <div className="text-5xl font-black text-cyan-600">
-            {analytics.avgPublicationsPerCV.toFixed(1)}
-          </div>
-        </div>
-        {pubCountChartData.some(d => d.count > 0) ? (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={pubCountChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="range" stroke="#64748b" style={{ fontSize: '13px', fontWeight: '600' }} />
-              <YAxis stroke="#64748b" style={{ fontSize: '13px', fontWeight: '600' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'white',
-                  border: '2px solid #06b6d4',
-                  borderRadius: '12px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  fontWeight: 'bold'
-                }}
-                cursor={{ fill: 'rgba(6, 182, 212, 0.1)' }}
-              />
-              <Bar dataKey="count" fill="url(#colorGradient3)" radius={[8, 8, 0, 0]} />
-              <defs>
-                <linearGradient id="colorGradient3" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#06b6d4" />
-                  <stop offset="100%" stopColor="#3b82f6" />
-                </linearGradient>
-              </defs>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="h-[300px] flex items-center justify-center text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 font-semibold">
-            Insufficient data for distribution chart
-          </div>
-        )}
 
-        {/* Sub-sections for Ranked Journals and Conferences */}
-        <div className="mt-8 grid md:grid-cols-2 gap-6">
+        <div className="grid md:grid-cols-2 gap-6">
           {/* Ranked Journals */}
           <div className="bg-emerald-50 rounded-xl p-6 border-2 border-emerald-200">
             <h4 className="text-lg font-bold text-emerald-800 mb-3">Ranked Journal Publications (Q1/Q2/Q3)</h4>
@@ -410,45 +373,8 @@ export default function Analytics() {
             <p className="text-sm text-slate-500 font-medium">Research activity recency</p>
           </div>
         </div>
-        <div className="mb-6 p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border-2 border-blue-200">
-          <div className="text-sm text-slate-600 mb-2 font-semibold uppercase tracking-wide">Average Years Since Last Publication</div>
-          <div className="text-5xl font-black text-blue-600">
-            {analytics.avgYearsSinceLastPub > 0 ? `${analytics.avgYearsSinceLastPub} years` : 'N/A'}
-          </div>
-        </div>
-        {lastPubChartData.some(d => d.count > 0) ? (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={lastPubChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="range" stroke="#64748b" style={{ fontSize: '13px', fontWeight: '600' }} />
-              <YAxis stroke="#64748b" style={{ fontSize: '13px', fontWeight: '600' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'white',
-                  border: '2px solid #3b82f6',
-                  borderRadius: '12px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  fontWeight: 'bold'
-                }}
-                cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
-              />
-              <Bar dataKey="count" fill="url(#colorGradient4)" radius={[8, 8, 0, 0]} />
-              <defs>
-                <linearGradient id="colorGradient4" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3b82f6" />
-                  <stop offset="100%" stopColor="#2563eb" />
-                </linearGradient>
-              </defs>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="h-[300px] flex items-center justify-center text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 font-semibold">
-            Insufficient data for distribution chart
-          </div>
-        )}
 
-        {/* Sub-sections for Ranked Journals and Conferences */}
-        <div className="mt-8 grid md:grid-cols-2 gap-6">
+        <div className="grid md:grid-cols-2 gap-6">
           {/* Ranked Journals */}
           <div className="bg-emerald-50 rounded-xl p-6 border-2 border-emerald-200">
             <h4 className="text-lg font-bold text-emerald-800 mb-3">Years Since Last Ranked Journal</h4>
@@ -527,45 +453,8 @@ export default function Analytics() {
             <p className="text-sm text-slate-500 font-medium">Recent research productivity</p>
           </div>
         </div>
-        <div className="mb-6 p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border-2 border-blue-300">
-          <div className="text-sm text-slate-600 mb-2 font-semibold uppercase tracking-wide">Average Recent Publications (Last 5 Years)</div>
-          <div className="text-5xl font-black text-blue-700">
-            {analytics.avgRecentPublications.toFixed(1)}
-          </div>
-        </div>
-        {recentPubChartData.some(d => d.count > 0) ? (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={recentPubChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="range" stroke="#64748b" style={{ fontSize: '13px', fontWeight: '600' }} />
-              <YAxis stroke="#64748b" style={{ fontSize: '13px', fontWeight: '600' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'white',
-                  border: '2px solid #2563eb',
-                  borderRadius: '12px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  fontWeight: 'bold'
-                }}
-                cursor={{ fill: 'rgba(37, 99, 235, 0.1)' }}
-              />
-              <Bar dataKey="count" fill="url(#colorGradient5)" radius={[8, 8, 0, 0]} />
-              <defs>
-                <linearGradient id="colorGradient5" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#2563eb" />
-                  <stop offset="100%" stopColor="#1e3a8a" />
-                </linearGradient>
-              </defs>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="h-[300px] flex items-center justify-center text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 font-semibold">
-            Insufficient data for distribution chart
-          </div>
-        )}
 
-        {/* Sub-sections for Ranked Journals and Conferences */}
-        <div className="mt-8 grid md:grid-cols-2 gap-6">
+        <div className="grid md:grid-cols-2 gap-6">
           {/* Ranked Journals */}
           <div className="bg-emerald-50 rounded-xl p-6 border-2 border-emerald-200">
             <h4 className="text-lg font-bold text-emerald-800 mb-3">Ranked Journals (Last 5 Years)</h4>
