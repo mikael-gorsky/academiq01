@@ -65,9 +65,9 @@ The CV parsing is handled by Supabase Edge Functions. Deploy them:
 supabase secrets set OPENAI_API_KEY=your-openai-api-key
 
 # Deploy all functions
-supabase functions deploy academiq-parse-cv
-supabase functions deploy check-duplicate-cv
-supabase functions deploy setup-database
+supabase functions deploy academiq_parse_cv
+supabase functions deploy academiq_check_duplicate_cv
+supabase functions deploy academiq_setup_database
 ```
 
 ### Step 5: Deploy to Netlify
@@ -136,7 +136,7 @@ npm run dev
 ## Project Structure
 
 ```
-academiq01/
+academiq26/
 ├── src/
 │   ├── components/     # React components
 │   ├── lib/           # Supabase client & database functions

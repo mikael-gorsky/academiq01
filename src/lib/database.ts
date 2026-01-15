@@ -713,7 +713,7 @@ export async function parseCV(
   pdfFilename: string,
   onProgress?: (event: ParseProgressEvent) => void
 ): Promise<ParsedCVData> {
-  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq-parse-cv`;
+  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq_parse_cv`;
   const headers = {
     'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
     'Content-Type': 'application/json',
@@ -809,7 +809,7 @@ export async function parseCV(
 }
 
 export async function checkDuplicateCV(pdfFilename: string): Promise<void> {
-  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-duplicate-cv`;
+  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/academiq_check_duplicate_cv`;
   const headers = {
     'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
     'Content-Type': 'application/json',
