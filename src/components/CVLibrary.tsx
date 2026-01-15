@@ -123,39 +123,85 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
     });
   };
 
-  const exportToRTF = () => {
+  const exportToWord = async () => {
     const data = getExportData();
 
-    // RTF header
-    let rtf = '{\\rtf1\\ansi\\deff0 {\\fonttbl{\\f0 Arial;}}\n';
-    rtf += '\\f0\\fs24\n';
-
-    // Title
-    rtf += '{\\b Faculty Members Export}\\par\\par\n';
-    rtf += `Generated: ${new Date().toLocaleDateString()}\\par\\par\n`;
-
-    // Table header
-    rtf += '{\\b First Name\\tab Last Name\\tab Latest Publication Year\\tab Latest Publication Title}\\par\n';
-    rtf += '\\line\n';
-
-    // Table rows
-    data.forEach(row => {
-      const title = row.latestPubTitle.length > 60
-        ? row.latestPubTitle.substring(0, 60) + '...'
+    // Create table rows XML
+    const tableRows = data.map(row => {
+      const title = row.latestPubTitle.length > 80
+        ? row.latestPubTitle.substring(0, 80) + '...'
         : row.latestPubTitle;
-      // Escape special RTF characters
-      const escapedTitle = title.replace(/[\\{}]/g, '\\$&');
-      rtf += `${row.firstName}\\tab ${row.lastName}\\tab ${row.latestPubYear || 'N/A'}\\tab ${escapedTitle}\\par\n`;
-    });
+      // Escape XML special characters
+      const escapeXml = (str: string) => str.replace(/[<>&'"]/g, c => ({
+        '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;'
+      }[c] || c));
 
-    rtf += '}';
+      return `<w:tr>
+        <w:tc><w:p><w:r><w:t>${escapeXml(row.firstName)}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>${escapeXml(row.lastName)}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>${row.latestPubYear || 'N/A'}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>${escapeXml(title)}</w:t></w:r></w:p></w:tc>
+      </w:tr>`;
+    }).join('\n');
 
-    // Create and download file
-    const blob = new Blob([rtf], { type: 'application/rtf' });
+    // DOCX document.xml content
+    const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Faculty Members Export</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Generated: ${new Date().toLocaleDateString()}</w:t></w:r></w:p>
+    <w:p/>
+    <w:tbl>
+      <w:tblPr>
+        <w:tblStyle w:val="TableGrid"/>
+        <w:tblW w:w="5000" w:type="pct"/>
+        <w:tblBorders>
+          <w:top w:val="single" w:sz="4" w:color="000000"/>
+          <w:left w:val="single" w:sz="4" w:color="000000"/>
+          <w:bottom w:val="single" w:sz="4" w:color="000000"/>
+          <w:right w:val="single" w:sz="4" w:color="000000"/>
+          <w:insideH w:val="single" w:sz="4" w:color="000000"/>
+          <w:insideV w:val="single" w:sz="4" w:color="000000"/>
+        </w:tblBorders>
+      </w:tblPr>
+      <w:tr>
+        <w:tc><w:p><w:pPr><w:b/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>First Name</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:pPr><w:b/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Last Name</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:pPr><w:b/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Year</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:pPr><w:b/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Latest Publication / Conference</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      ${tableRows}
+    </w:tbl>
+    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+  </w:body>
+</w:document>`;
+
+    const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`;
+
+    const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`;
+
+    // Use JSZip-like approach with manual ZIP creation
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+
+    zip.file('[Content_Types].xml', contentTypesXml);
+    zip.file('_rels/.rels', relsXml);
+    zip.file('word/document.xml', documentXml);
+
+    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `faculty-members-${new Date().toISOString().split('T')[0]}.rtf`;
+    a.download = `faculty-members-${new Date().toISOString().split('T')[0]}.docx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -937,13 +983,13 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
               </button>
               <button
                 onClick={() => {
-                  exportToRTF();
+                  exportToWord();
                   setShowExportModal(false);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors"
               >
                 <Download className="w-4 h-4" />
-                Export as RTF
+                Export as Word
               </button>
             </div>
           </div>
