@@ -10,6 +10,8 @@ import {
   Trash2,
   CheckSquare,
   Square,
+  Download,
+  FileText,
 } from 'lucide-react';
 import { getAllPersons, deletePerson, deletePersons } from '../lib/database';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -58,6 +60,7 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
   const [personToDelete, setPersonToDelete] = useState<PersonData | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const [sortBy, setSortBy] = useState<
     | 'name-asc'
     | 'name-desc'
@@ -100,6 +103,65 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
   const getLastPublicationYear = (person: PersonData) => {
     if (person.publications.length === 0) return null;
     return Math.max(...person.publications.map((pub) => pub.publication_year));
+  };
+
+  const getLatestPublication = (person: PersonData) => {
+    if (person.publications.length === 0) return null;
+    const sorted = [...person.publications].sort((a, b) => b.publication_year - a.publication_year);
+    return sorted[0];
+  };
+
+  const getExportData = () => {
+    return filteredAndSortedCVs.map(person => {
+      const latestPub = getLatestPublication(person);
+      return {
+        firstName: person.first_name,
+        lastName: person.last_name,
+        latestPubYear: latestPub?.publication_year || null,
+        latestPubTitle: latestPub?.title || 'No publications',
+      };
+    });
+  };
+
+  const exportToRTF = () => {
+    const data = getExportData();
+
+    // RTF header
+    let rtf = '{\\rtf1\\ansi\\deff0 {\\fonttbl{\\f0 Arial;}}\n';
+    rtf += '\\f0\\fs24\n';
+
+    // Title
+    rtf += '{\\b Faculty Members Export}\\par\\par\n';
+    rtf += `Generated: ${new Date().toLocaleDateString()}\\par\\par\n`;
+
+    // Table header
+    rtf += '{\\b First Name\\tab Last Name\\tab Latest Publication Year\\tab Latest Publication Title}\\par\n';
+    rtf += '\\line\n';
+
+    // Table rows
+    data.forEach(row => {
+      const title = row.latestPubTitle.length > 60
+        ? row.latestPubTitle.substring(0, 60) + '...'
+        : row.latestPubTitle;
+      // Escape special RTF characters
+      const escapedTitle = title.replace(/[\\{}]/g, '\\$&');
+      rtf += `${row.firstName}\\tab ${row.lastName}\\tab ${row.latestPubYear || 'N/A'}\\tab ${escapedTitle}\\par\n`;
+    });
+
+    rtf += '}';
+
+    // Create and download file
+    const blob = new Blob([rtf], { type: 'application/rtf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `faculty-members-${new Date().toISOString().split('T')[0]}.rtf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('Faculty list exported successfully', 'success');
   };
 
   const getHighestDegree = (person: PersonData) => {
@@ -454,6 +516,13 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
             <span className="px-3 py-1 bg-cyan-100 text-cyan-800 rounded-full text-sm font-semibold">
               {filteredAndSortedCVs.length} {filteredAndSortedCVs.length === 1 ? 'member' : 'members'}
             </span>
+            <button
+              onClick={() => setShowExportModal(true)}
+              className="flex items-center gap-2 px-3 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded-full text-sm font-semibold transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Export list
+            </button>
             {selectedIds.size > 0 && (
               <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold">
                 {selectedIds.size} selected
@@ -814,6 +883,72 @@ export default function CVLibrary({ onViewResearcher }: CVLibraryProps) {
         cancelText="Cancel"
         confirmVariant="danger"
       />
+
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200">
+              <div className="flex items-center gap-3">
+                <FileText className="w-6 h-6 text-cyan-600" />
+                <h2 className="text-xl font-bold text-slate-800">Faculty Members Export</h2>
+                <span className="px-3 py-1 bg-cyan-100 text-cyan-800 rounded-full text-sm font-semibold">
+                  {filteredAndSortedCVs.length} members
+                </span>
+              </div>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <th className="text-left p-3 font-semibold text-slate-700 border-b border-slate-200">First Name</th>
+                    <th className="text-left p-3 font-semibold text-slate-700 border-b border-slate-200">Last Name</th>
+                    <th className="text-left p-3 font-semibold text-slate-700 border-b border-slate-200">Year</th>
+                    <th className="text-left p-3 font-semibold text-slate-700 border-b border-slate-200">Latest Publication / Conference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {getExportData().map((row, index) => (
+                    <tr key={index} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-3 border-b border-slate-100 text-slate-800">{row.firstName}</td>
+                      <td className="p-3 border-b border-slate-100 text-slate-800">{row.lastName}</td>
+                      <td className="p-3 border-b border-slate-100 text-slate-600">{row.latestPubYear || 'N/A'}</td>
+                      <td className="p-3 border-b border-slate-100 text-slate-600 max-w-md">
+                        <span className="line-clamp-2">{row.latestPubTitle}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-slate-200 bg-slate-50">
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg font-medium transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  exportToRTF();
+                  setShowExportModal(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Export as RTF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
