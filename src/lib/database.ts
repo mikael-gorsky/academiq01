@@ -327,8 +327,18 @@ export async function getAnalyticsData() {
   }
 
   const totalPersons = persons?.length || 0;
-  const totalPublications = publications?.length || 0;
   const totalGrants = grants?.length || 0;
+
+  // Helper function to check if publication is Q1-Q3 ranked journal
+  const isRankedJournal = (type: string | null | undefined): boolean => {
+    if (!type) return false;
+    const lowerType = type.toLowerCase();
+    return (lowerType.includes('ranked') &&
+            (lowerType.includes('q1') || lowerType.includes('q2') || lowerType.includes('q3')));
+  };
+
+  // Count only Q1-Q3 ranked journal publications
+  const totalRankedPublications = publications?.filter(pub => isRankedJournal(pub.publication_type)).length || 0;
 
   const currentYear = new Date().getFullYear();
 
@@ -642,9 +652,9 @@ export async function getAnalyticsData() {
 
   return {
     totalPersons,
-    totalPublications,
+    totalRankedPublications,
     totalGrants,
-    avgPublicationsPerCV: totalPersons > 0 ? totalPublications / totalPersons : 0,
+    avgPublicationsPerCV: totalPersons > 0 ? totalRankedPublications / totalPersons : 0,
     averageAge,
     ageDistribution,
     avgYearsSinceDegree,

@@ -4,7 +4,7 @@ import { getAnalyticsData } from '../lib/database';
 
 interface AnalyticsData {
   totalPersons: number;
-  totalPublications: number;
+  totalRankedPublications: number;
   totalGrants: number;
   avgPublicationsPerCV: number;
   averageAge: number;
@@ -126,9 +126,9 @@ export default function Dashboard() {
             </div>
             <div className="mt-6">
               <BookOpen className="w-6 h-6 text-white mb-3" />
-              <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Total Publications</p>
-              <p className="text-4xl font-black text-white">{analytics.totalPublications.toLocaleString()}</p>
-              <p className="text-xs text-white/80 mt-2 font-semibold">Across all faculty</p>
+              <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Q1-Q3 Publications</p>
+              <p className="text-4xl font-black text-white">{analytics.totalRankedPublications.toLocaleString()}</p>
+              <p className="text-xs text-white/80 mt-2 font-semibold">Ranked journal articles</p>
             </div>
           </div>
 
@@ -138,7 +138,7 @@ export default function Dashboard() {
             </div>
             <div className="mt-6">
               <Award className="w-6 h-6 text-white mb-3" />
-              <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Avg Publications</p>
+              <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Avg Q1-Q3 Pubs</p>
               <p className="text-4xl font-black text-white">{analytics.avgPublicationsPerCV.toFixed(1)}</p>
               <p className="text-xs text-white/80 mt-2 font-semibold">Per faculty member</p>
             </div>
