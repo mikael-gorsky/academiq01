@@ -244,7 +244,7 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
           className="flex items-center gap-2 text-cyan-600 hover:text-cyan-700 font-medium mb-6 transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
-          Back to Processed Researchers
+          Back
         </button>
 
         {isEditing ? (
