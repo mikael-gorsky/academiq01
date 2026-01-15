@@ -15,8 +15,10 @@ import {
   Edit,
   Trash2,
   Loader2,
+  X,
+  Check,
 } from 'lucide-react';
-import { getPersonById, deletePerson } from '../lib/database';
+import { getPersonById, deletePerson, updatePersonName, updateCurrentPosition } from '../lib/database';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
 
@@ -33,6 +35,14 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
   const [error, setError] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [pubSort, setPubSort] = useState<'year-desc' | 'year-asc'>('year-desc');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    firstName: '',
+    lastName: '',
+    positionTitle: '',
+    institution: '',
+  });
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (researcherId) {
@@ -63,6 +73,58 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
       onBack();
     } catch (err) {
       showToast('Failed to delete researcher', 'error');
+    }
+  };
+
+  const handleStartEdit = () => {
+    const currentPos = researcher.experience?.find((exp: any) => !exp.end_date);
+    setEditForm({
+      firstName: researcher.first_name || '',
+      lastName: researcher.last_name || '',
+      positionTitle: currentPos?.position_title || '',
+      institution: currentPos?.institution || '',
+    });
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditForm({
+      firstName: '',
+      lastName: '',
+      positionTitle: '',
+      institution: '',
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editForm.firstName.trim() || !editForm.lastName.trim()) {
+      showToast('First name and last name are required', 'error');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Update name
+      await updatePersonName(researcherId, editForm.firstName.trim(), editForm.lastName.trim());
+
+      // Update current position if provided
+      if (editForm.positionTitle.trim() || editForm.institution.trim()) {
+        await updateCurrentPosition(
+          researcherId,
+          editForm.positionTitle.trim() || 'Position not specified',
+          editForm.institution.trim() || 'Institution not specified'
+        );
+      }
+
+      // Reload researcher data
+      await loadResearcher();
+      setIsEditing(false);
+      showToast('Changes saved successfully', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save changes', 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -185,59 +247,137 @@ export default function ResearcherDetail({ researcherId, onBack }: ResearcherDet
           Back to Processed Researchers
         </button>
 
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <h1 className="text-4xl font-bold text-blue-900 mb-2">
-              {researcher.first_name} {researcher.last_name}
-            </h1>
-            {currentPosition && (
-              <p className="text-xl text-slate-700 mb-4">
-                {currentPosition.position_title}
-                {currentPosition.institution && (
-                  <span className="text-slate-500"> at {currentPosition.institution}</span>
+        {isEditing ? (
+          <div className="space-y-4">
+            <h2 className="text-xl font-bold text-slate-800 mb-4">Edit Profile</h2>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  First Name *
+                </label>
+                <input
+                  type="text"
+                  value={editForm.firstName}
+                  onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  placeholder="First name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Last Name *
+                </label>
+                <input
+                  type="text"
+                  value={editForm.lastName}
+                  onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  placeholder="Last name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Current Position
+                </label>
+                <input
+                  type="text"
+                  value={editForm.positionTitle}
+                  onChange={(e) => setEditForm({ ...editForm, positionTitle: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  placeholder="e.g., Associate Professor"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Institution
+                </label>
+                <input
+                  type="text"
+                  value={editForm.institution}
+                  onChange={(e) => setEditForm({ ...editForm, institution: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  placeholder="e.g., MIT"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-4">
+              <button
+                onClick={handleSaveEdit}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                {saving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Check className="w-4 h-4" />
                 )}
-              </p>
-            )}
-            <div className="flex flex-wrap gap-4 text-slate-600">
-              {researcher.email && (
-                <a
-                  href={`mailto:${researcher.email}`}
-                  className="flex items-center gap-2 hover:text-cyan-600 transition-colors"
-                >
-                  <Mail className="w-4 h-4" />
-                  {researcher.email}
-                </a>
-              )}
-              {researcher.phone && (
-                <span className="flex items-center gap-2">
-                  <Phone className="w-4 h-4" />
-                  {researcher.phone}
-                </span>
-              )}
-              <span className="flex items-center gap-2">
-                <Calendar className="w-4 h-4" />
-                Processed on {new Date(researcher.imported_at).toLocaleDateString()}
-              </span>
+                Save Changes
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+                Cancel
+              </button>
             </div>
           </div>
+        ) : (
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <h1 className="text-4xl font-bold text-blue-900 mb-2">
+                {researcher.first_name} {researcher.last_name}
+              </h1>
+              {currentPosition && (
+                <p className="text-xl text-slate-700 mb-4">
+                  {currentPosition.position_title}
+                  {currentPosition.institution && (
+                    <span className="text-slate-500"> at {currentPosition.institution}</span>
+                  )}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-4 text-slate-600">
+                {researcher.email && (
+                  <a
+                    href={`mailto:${researcher.email}`}
+                    className="flex items-center gap-2 hover:text-cyan-600 transition-colors"
+                  >
+                    <Mail className="w-4 h-4" />
+                    {researcher.email}
+                  </a>
+                )}
+                {researcher.phone && (
+                  <span className="flex items-center gap-2">
+                    <Phone className="w-4 h-4" />
+                    {researcher.phone}
+                  </span>
+                )}
+                <span className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4" />
+                  Processed on {new Date(researcher.imported_at).toLocaleDateString()}
+                </span>
+              </div>
+            </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => showToast('Edit functionality coming soon', 'info')}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-medium transition-colors"
-            >
-              <Edit className="w-4 h-4" />
-              Edit
-            </button>
-            <button
-              onClick={() => setShowDeleteDialog(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-              Delete
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleStartEdit}
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-medium transition-colors"
+              >
+                <Edit className="w-4 h-4" />
+                Edit
+              </button>
+              <button
+                onClick={() => setShowDeleteDialog(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {sortedEducation.length > 0 && (

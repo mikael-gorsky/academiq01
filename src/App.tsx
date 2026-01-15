@@ -111,7 +111,7 @@ function App() {
                     </button>
                     <button onClick={() => handleNavClick('library')} className={navButtonClass('library')}>
                       <GraduationCap className="w-5 h-5" />
-                      Academics
+                      Faculty Members
                     </button>
                     <button onClick={() => handleNavClick('analytics')} className={navButtonClass('analytics')}>
                       <BarChart3 className="w-5 h-5" />
@@ -148,7 +148,7 @@ function App() {
                   </button>
                   <button onClick={() => handleNavClick('library')} className={mobileNavButtonClass('library')}>
                     <GraduationCap className="w-5 h-5" />
-                    Academics
+                    Faculty Members
                   </button>
                   <button onClick={() => handleNavClick('analytics')} className={mobileNavButtonClass('analytics')}>
                     <BarChart3 className="w-5 h-5" />

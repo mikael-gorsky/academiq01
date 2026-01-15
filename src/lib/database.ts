@@ -241,6 +241,70 @@ export async function deletePersons(ids: string[]): Promise<void> {
   }
 }
 
+export async function updatePersonName(
+  id: string,
+  firstName: string,
+  lastName: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('academiq_persons')
+    .update({
+      first_name: firstName,
+      last_name: lastName,
+    })
+    .eq('id', id);
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function updateCurrentPosition(
+  personId: string,
+  positionTitle: string,
+  institution: string
+): Promise<void> {
+  // Find the current position (no end_date)
+  const { data: currentExp, error: fetchError } = await supabase
+    .from('academiq_experience')
+    .select('id')
+    .eq('person_id', personId)
+    .is('end_date', null)
+    .maybeSingle();
+
+  if (fetchError) {
+    throw fetchError;
+  }
+
+  if (currentExp) {
+    // Update existing current position
+    const { error } = await supabase
+      .from('academiq_experience')
+      .update({
+        position_title: positionTitle,
+        institution: institution,
+      })
+      .eq('id', currentExp.id);
+
+    if (error) {
+      throw error;
+    }
+  } else {
+    // Create new current position if none exists
+    const { error } = await supabase
+      .from('academiq_experience')
+      .insert({
+        person_id: personId,
+        position_title: positionTitle,
+        institution: institution,
+      });
+
+    if (error) {
+      throw error;
+    }
+  }
+}
+
 export async function getAnalyticsData() {
   const { data: persons, error: personsError } = await supabase
     .from('academiq_persons')

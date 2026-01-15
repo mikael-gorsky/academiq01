@@ -102,7 +102,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h2 className="text-3xl font-bold">Brilliance Insights</h2>
-              <p className="text-white/90 text-sm font-medium mt-1">Comprehensive analytics across all processed researchers</p>
+              <p className="text-white/90 text-sm font-medium mt-1">Comprehensive analytics across all faculty members</p>
             </div>
           </div>
         </div>
@@ -114,7 +114,7 @@ export default function Dashboard() {
             </div>
             <div className="mt-6">
               <Users className="w-6 h-6 text-white mb-3" />
-              <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Total Researchers</p>
+              <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Faculty Members</p>
               <p className="text-4xl font-black text-white">{analytics.totalPersons}</p>
               <p className="text-xs text-white/80 mt-2 font-semibold">Processed in database</p>
             </div>
@@ -128,7 +128,7 @@ export default function Dashboard() {
               <BookOpen className="w-6 h-6 text-white mb-3" />
               <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Total Publications</p>
               <p className="text-4xl font-black text-white">{analytics.totalPublications.toLocaleString()}</p>
-              <p className="text-xs text-white/80 mt-2 font-semibold">Across all researchers</p>
+              <p className="text-xs text-white/80 mt-2 font-semibold">Across all faculty</p>
             </div>
           </div>
 
@@ -140,7 +140,7 @@ export default function Dashboard() {
               <Award className="w-6 h-6 text-white mb-3" />
               <p className="text-white/90 text-xs font-bold uppercase tracking-wide mb-1">Avg Publications</p>
               <p className="text-4xl font-black text-white">{analytics.avgPublicationsPerCV.toFixed(1)}</p>
-              <p className="text-xs text-white/80 mt-2 font-semibold">Per researcher</p>
+              <p className="text-xs text-white/80 mt-2 font-semibold">Per faculty member</p>
             </div>
           </div>
 
